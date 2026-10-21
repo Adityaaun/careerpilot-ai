@@ -28,6 +28,21 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} dark h-full`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if (typeof window !== 'undefined') {
+                var orig = Element.prototype.setAttribute;
+                Element.prototype.setAttribute = function(k, v) {
+                  if (k && (k.indexOf('bis_') === 0 || k.indexOf('__processed_') === 0)) return;
+                  return orig.apply(this, arguments);
+                };
+              }
+            `,
+          }}
+        />
+      </head>
       <body
         className="min-h-full flex flex-col antialiased bg-[#0b0f19] text-slate-100 selection:bg-indigo-500/30 selection:text-indigo-200"
         suppressHydrationWarning
