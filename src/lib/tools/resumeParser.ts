@@ -1,4 +1,5 @@
 import mammoth from "mammoth";
+import zlib from "zlib";
 import {
   ParsedProfile,
   ParsedProfileSchema,
@@ -30,6 +31,52 @@ const COMMON_DESIGNATIONS = [
   "AI Engineer", "Mobile Developer", "iOS Developer", "Android Developer", "Systems Engineer",
   "QA Engineer", "Site Reliability Engineer", "SRE", "Tech Lead", "Lead Software Engineer", "Engineering Manager"
 ];
+
+/**
+ * Pure-Node binary PDF stream text extractor used as a resilient fallback
+ * for serverless environments (such as Vercel AWS Lambda) where external worker files may not be traced.
+ */
+export function extractPdfTextFallback(buffer: Buffer): string {
+  const text = buffer.toString("latin1");
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let result = "";
+  let match: RegExpExecArray | null;
+
+  while ((match = streamRegex.exec(text)) !== null) {
+    let streamData: Buffer = Buffer.from(match[1], "latin1");
+    try {
+      streamData = zlib.inflateSync(streamData);
+    } catch {
+      // uncompressed stream data
+    }
+    const content = streamData.toString("latin1");
+    const tjRegex = /\((.*?)\)\s*Tj/g;
+    let tjMatch: RegExpExecArray | null;
+    while ((tjMatch = tjRegex.exec(content)) !== null) {
+      result += tjMatch[1].replace(/\\([()\\])/g, "$1") + " ";
+    }
+    const tjArrayRegex = /\[(.*?)\]\s*TJ/g;
+    let tjaMatch: RegExpExecArray | null;
+    while ((tjaMatch = tjArrayRegex.exec(content)) !== null) {
+      const innerRegex = /\((.*?)\)/g;
+      let innerMatch: RegExpExecArray | null;
+      while ((innerMatch = innerRegex.exec(tjaMatch[1])) !== null) {
+        result += innerMatch[1].replace(/\\([()\\])/g, "$1");
+      }
+      result += " ";
+    }
+  }
+
+  // Also extract plain text literals from stream if formatting differs
+  if (result.trim().length < 20) {
+    const rawMatches = text.match(/\(([^()]{4,})\)/g);
+    if (rawMatches) {
+      result = rawMatches.map((m) => m.slice(1, -1)).join(" ");
+    }
+  }
+
+  return result.trim();
+}
 
 /**
  * Extracts raw textual content from uploaded PDF or DOCX file buffer
@@ -119,7 +166,15 @@ export async function extractTextFromBuffer(
         throw new Error("Unable to initialize PDF parsing engine.");
       }
     } catch (err) {
-      throw new Error(`Failed to read PDF document: ${(err as Error).message}`);
+      // Graceful fallback: extract text directly from PDF binary streams (crucial for serverless lambdas missing pdf.worker.mjs)
+      try {
+        extractedText = extractPdfTextFallback(buffer);
+      } catch {
+        // ignore
+      }
+      if (!extractedText || extractedText.length < 20) {
+        throw new Error(`Failed to read PDF document: ${(err as Error).message}`);
+      }
     }
   } else if (isDocx) {
     try {

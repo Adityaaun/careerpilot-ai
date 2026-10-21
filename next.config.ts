@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   serverExternalPackages: ["pdf-parse", "mammoth"],
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./node_modules/pdf-parse/**/*"],
+  },
   turbopack: {
     root: process.cwd(),
     rules: {
