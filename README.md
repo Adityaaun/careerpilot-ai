@@ -171,11 +171,13 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
   - Seed verified dataset (`data/jobs.sample.json` and `data/jobs.json`)
   - Initial responsive chat UI shell
   - Automated test harness and lint configuration
-- [ ] **Phase 2: Job Dataset Scaling & Deterministic Tool Engine**
-  - Full dataset collection (1,500–2,000 unique verified listings)
-  - PDF & DOCX text extraction tools (`pdf-parse`, `mammoth`)
-  - Explainable job matching algorithm (skill overlap, title similarity, experience scoring)
-  - Safe application storage engine with duplicate prevention
+- [x] **Phase 2: Real Job Dataset, Resume Parser, Matching Engine & Application Storage** *(Completed)*
+  - Scaled real job dataset to 1,600 verified listings via Arbeitnow public API (0 duplicates, 100% schema compliance)
+  - Implemented `resumeParser.ts` supporting PDF (`pdf-parse`) and DOCX (`mammoth`) with size checks, heuristic extraction, and missing field preservation
+  - Implemented `jobMatcher.ts` with 50/30/20 explainable match scoring, multi-criteria filtering, and deterministic tie handling
+  - Implemented `applicationStore.ts` with atomic writes, duplicate prevention, and quarantine of corrupted storage
+  - Exposed REST API endpoints (`/api/resume/parse`, `/api/jobs/search`, `/api/applications`)
+  - Added 28 automated tests across 5 test suites (all passing in <1s)
 - [ ] **Phase 3: Agent Orchestrator & Conversational Refinement**
   - Intent classification & tool dispatching
   - Natural language follow-up filtering (*"show remote only"*, *"requires React"*)

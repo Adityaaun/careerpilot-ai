@@ -2,14 +2,17 @@ import fs from "fs";
 import path from "path";
 import { JobListingSchema, JobListing } from "../src/lib/types/job";
 
-interface ValidationReport {
+export interface ValidationReport {
   totalRecords: number;
   validRecords: number;
   invalidRecords: number;
   duplicateIds: number;
   duplicateContentKeys: number;
   remoteCount: number;
+  weakDescriptions: number; // descriptions under 100 characters
+  avgSkillsPerJob: number;
   sources: Record<string, number>;
+  experienceDistribution: Record<string, number>;
   errors: Array<{ index: number; id?: string; issues: string[] }>;
 }
 
@@ -38,12 +41,16 @@ export function validateJobDataset(filePath: string): { isValid: boolean; report
     duplicateIds: 0,
     duplicateContentKeys: 0,
     remoteCount: 0,
+    weakDescriptions: 0,
+    avgSkillsPerJob: 0,
     sources: {},
+    experienceDistribution: {},
     errors: [],
   };
 
   const seenIds = new Set<string>();
   const seenContentKeys = new Set<string>();
+  let totalSkillsCount = 0;
 
   records.forEach((raw, index) => {
     const parseResult = JobListingSchema.safeParse(raw);
@@ -79,9 +86,19 @@ export function validateJobDataset(filePath: string): { isValid: boolean; report
       report.remoteCount++;
     }
 
+    if (job.description.length < 100) {
+      report.weakDescriptions++;
+    }
+
+    totalSkillsCount += job.skills.length;
+
     report.sources[job.source] = (report.sources[job.source] || 0) + 1;
+    report.experienceDistribution[job.experience_required] =
+      (report.experienceDistribution[job.experience_required] || 0) + 1;
     report.validRecords++;
   });
+
+  report.avgSkillsPerJob = report.validRecords > 0 ? +(totalSkillsCount / report.validRecords).toFixed(1) : 0;
 
   const isValid =
     report.invalidRecords === 0 &&
@@ -107,7 +124,10 @@ if (require.main === module || process.argv[1]?.includes("validate_jobs")) {
     console.log(`⚠️  Duplicate IDs:             ${report.duplicateIds}`);
     console.log(`⚠️  Duplicate Content Keys:    ${report.duplicateContentKeys}`);
     console.log(`🌐 Remote Listings:           ${report.remoteCount}`);
+    console.log(`📝 Weak Descriptions (<100c): ${report.weakDescriptions}`);
+    console.log(`⚡ Average Skills Per Job:     ${report.avgSkillsPerJob}`);
     console.log(`📦 Sources Breakdown:         ${JSON.stringify(report.sources, null, 2)}`);
+    console.log(`🎯 Experience Distribution:   ${JSON.stringify(report.experienceDistribution, null, 2)}`);
 
     if (report.errors.length > 0) {
       console.log(`\nSample Validation Errors (first 5):`);
@@ -120,7 +140,7 @@ if (require.main === module || process.argv[1]?.includes("validate_jobs")) {
     if (isValid) {
       console.log(`✨ Status: PASSED (Schema conforms with zero invalid records or duplicate IDs)`);
       if (report.validRecords < 1500) {
-        console.log(`ℹ️  Note: Current verified count is ${report.validRecords} (Development dataset). Full collection target is 1,500-2,000 for Phase 2.`);
+        console.log(`ℹ️  Note: Current verified count is ${report.validRecords} (Development dataset). Target is 1,500-2,000 for full assessment.`);
       } else {
         console.log(`🎯 Target Reached: Dataset meets the 1,500-2,000 requirement with ${report.validRecords} listings!`);
       }
