@@ -72,6 +72,34 @@ export async function extractTextFromBuffer(
 
   if (isPdf) {
     try {
+      // Ensure DOMMatrix and Path2D globals exist for pdfjs inside Node.js / Next.js server runtime
+      if (typeof globalThis.DOMMatrix === "undefined") {
+        (globalThis as unknown as Record<string, unknown>).DOMMatrix = class DOMMatrix {
+          a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+          m11 = 1; m12 = 0; m13 = 0; m14 = 0;
+          m21 = 0; m22 = 1; m23 = 0; m24 = 0;
+          m31 = 0; m32 = 0; m33 = 1; m34 = 0;
+          m41 = 0; m42 = 0; m43 = 0; m44 = 1;
+          is2D = true;
+          isIdentity = true;
+        };
+      }
+      if (typeof globalThis.Path2D === "undefined") {
+        (globalThis as unknown as Record<string, unknown>).Path2D = class Path2D {};
+      }
+      if (typeof globalThis.ImageData === "undefined") {
+        (globalThis as unknown as Record<string, unknown>).ImageData = class ImageData {
+          data: Uint8ClampedArray;
+          width: number;
+          height: number;
+          constructor(width: number = 0, height: number = 0) {
+            this.width = width;
+            this.height = height;
+            this.data = new Uint8ClampedArray(width * height * 4);
+          }
+        };
+      }
+
       // Dynamic import / require of pdf-parse v2
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const pdfParseModule = require("pdf-parse");

@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "data:collect": "tsx scripts/collect_jobs.ts",
-    "data:validate": "tsx scripts/validate_jobs.ts"
+    "data:validate": "tsx scripts/validate_jobs.ts",
+    "test:workflow": "tsx scripts/test_phase4_workflow.ts"
   },
   "dependencies": {
     "@google/genai": "^2.30.0",

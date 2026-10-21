@@ -6,8 +6,12 @@ import JSZip from "jszip";
 export function createTestPdfBuffer(
   text = "Alex Smith\nEmail: alex.smith@example.com\nPhone: (555) 234-5678\nDesignation: Senior Full Stack Engineer\nSkills: TypeScript, React, Next.js, Node.js, PostgreSQL, AWS, Docker\nExperience: Senior Full Stack Engineer at Acme Corp 2021 - Present\nEducation: B.S. Computer Science from MIT 2020\nProjects: CareerPilot AI - Built real-time job assistant"
 ): Buffer {
-  const sanitizedText = text.replace(/[\r\n]+/g, " ");
-  const streamContent = `BT /F1 12 Tf 50 750 Td (${sanitizedText.slice(0, 150)}) Tj ET`;
+  const escapedText = text
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+  const streamContent = `BT /F1 12 Tf 50 750 Td (${escapedText}) Tj ET`;
 
   const pdf = `%PDF-1.4
 1 0 obj
