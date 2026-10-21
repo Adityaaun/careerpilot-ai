@@ -11,9 +11,18 @@ import { getJobDataset } from "./jobMatcher";
 // In-process write lock queue to serialize concurrent operations safely
 let writeQueue: Promise<unknown> = Promise.resolve();
 
+// In-memory fallback if file system is read-only (e.g. edge lambdas)
+const memoryFallbackStore: ApplicationRecord[] = [];
+
 function getStoragePath(customPath?: string): string {
   if (customPath) {
     return path.resolve(customPath);
+  }
+  if (process.env.APPLICATIONS_STORAGE_PATH) {
+    return path.resolve(process.env.APPLICATIONS_STORAGE_PATH);
+  }
+  if (process.env.VERCEL) {
+    return path.join("/tmp", "applications.json");
   }
   return path.join(process.cwd(), "data", "applications.json");
 }
@@ -24,46 +33,61 @@ function getStoragePath(customPath?: string): string {
 export function readApplications(customPath?: string): ApplicationRecord[] {
   const filePath = getStoragePath(customPath);
 
-  if (!fs.existsSync(/*turbopackIgnore: true*/ filePath)) {
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(/*turbopackIgnore: true*/ dir)) {
-      fs.mkdirSync(/*turbopackIgnore: true*/ dir, { recursive: true });
-    }
-    fs.writeFileSync(/*turbopackIgnore: true*/ filePath, "[]", "utf-8");
-    return [];
-  }
-
-  const raw = fs.readFileSync(/*turbopackIgnore: true*/ filePath, "utf-8").trim();
-  if (!raw) return [];
-
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    // Quarantine corrupted file to avoid silent data destruction
-    const backupPath = `${filePath}.corrupt.${Date.now()}`;
+    if (!fs.existsSync(/*turbopackIgnore: true*/ filePath)) {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(/*turbopackIgnore: true*/ dir)) {
+        fs.mkdirSync(/*turbopackIgnore: true*/ dir, { recursive: true });
+      }
+      fs.writeFileSync(/*turbopackIgnore: true*/ filePath, "[]", "utf-8");
+      return [...memoryFallbackStore];
+    }
+
+    const raw = fs.readFileSync(/*turbopackIgnore: true*/ filePath, "utf-8").trim();
+    if (!raw) return [...memoryFallbackStore];
+
+    let parsed: unknown;
     try {
-      fs.copyFileSync(filePath, backupPath);
-      console.warn(`[ApplicationStore] Quarantined corrupted storage to: ${backupPath}`);
-    } catch {
-      // ignore backup error
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      // Quarantine corrupted file to avoid silent data destruction
+      const backupPath = `${filePath}.corrupt.${Date.now()}`;
+      try {
+        fs.copyFileSync(filePath, backupPath);
+        console.warn(`[ApplicationStore] Quarantined corrupted storage to: ${backupPath}`);
+      } catch {
+        // ignore backup error
+      }
+      throw new Error(`Applications storage file is malformed JSON: ${(err as Error).message}`);
     }
-    throw new Error(`Applications storage file is malformed JSON: ${(err as Error).message}`);
-  }
 
-  if (!Array.isArray(parsed)) {
-    throw new Error("Applications storage expected a JSON array of records.");
-  }
-
-  const validRecords: ApplicationRecord[] = [];
-  for (const item of parsed) {
-    const result = ApplicationRecordSchema.safeParse(item);
-    if (result.success) {
-      validRecords.push(result.data);
+    if (!Array.isArray(parsed)) {
+      throw new Error("Applications storage expected a JSON array of records.");
     }
-  }
 
-  return validRecords;
+    const validRecords: ApplicationRecord[] = [];
+    for (const item of parsed) {
+      const result = ApplicationRecordSchema.safeParse(item);
+      if (result.success) {
+        validRecords.push(result.data);
+      }
+    }
+
+    // Merge in-memory records if any
+    for (const m of memoryFallbackStore) {
+      if (!validRecords.some((r) => r.id === m.id || r.jobId === m.jobId)) {
+        validRecords.push(m);
+      }
+    }
+
+    return validRecords;
+  } catch (err) {
+    if ((err as Error).message.includes("malformed JSON")) {
+      throw err;
+    }
+    // Read-only filesystem fallback
+    return [...memoryFallbackStore];
+  }
 }
 
 /**
@@ -77,13 +101,19 @@ async function atomicWriteApplications(
   const tempPath = `${filePath}.tmp.${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const dir = path.dirname(filePath);
 
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
-  const serialized = JSON.stringify(records, null, 2);
-  await fs.promises.writeFile(tempPath, serialized, "utf-8");
-  await fs.promises.rename(tempPath, filePath);
+    const serialized = JSON.stringify(records, null, 2);
+    await fs.promises.writeFile(tempPath, serialized, "utf-8");
+    await fs.promises.rename(tempPath, filePath);
+  } catch {
+    // If filesystem write fails (e.g. read-only lambda), persist to memory fallback
+    memoryFallbackStore.length = 0;
+    memoryFallbackStore.push(...records);
+  }
 }
 
 /**

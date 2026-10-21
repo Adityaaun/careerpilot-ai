@@ -64,17 +64,54 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isSubmitting]);
 
-  // Load existing application records on mount
+  // Load existing application records and profile on mount
   useEffect(() => {
+    // Check localStorage fallback for session continuity
+    try {
+      const cachedProfile = localStorage.getItem("careerpilot_profile");
+      if (cachedProfile) {
+        const parsed = JSON.parse(cachedProfile);
+        if (parsed && parsed.name) setActiveProfile(parsed);
+      }
+    } catch {
+      // ignore
+    }
+
     fetch("/api/applications")
       .then((r) => r.json())
       .then((data) => {
-        if (data.success && Array.isArray(data.applications)) {
+        if (data.success && Array.isArray(data.applications) && data.applications.length > 0) {
           setTrackedApplications(data.applications);
+        } else {
+          try {
+            const cachedApps = localStorage.getItem("careerpilot_apps");
+            if (cachedApps) {
+              const parsedApps = JSON.parse(cachedApps);
+              if (Array.isArray(parsedApps) && parsedApps.length > 0) {
+                setTrackedApplications(parsedApps);
+              }
+            }
+          } catch {
+            // ignore
+          }
         }
       })
       .catch(() => {});
   }, []);
+
+  // Sync state to localStorage for demo persistence
+  useEffect(() => {
+    try {
+      if (trackedApplications.length > 0) {
+        localStorage.setItem("careerpilot_apps", JSON.stringify(trackedApplications));
+      }
+      if (activeProfile) {
+        localStorage.setItem("careerpilot_profile", JSON.stringify(activeProfile));
+      }
+    } catch {
+      // ignore
+    }
+  }, [trackedApplications, activeProfile]);
 
   const suggestedPrompts = [
     { label: "📄 Upload Resume", action: () => setIsUploadOpen(true) },
