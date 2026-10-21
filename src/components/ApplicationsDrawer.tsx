@@ -1,23 +1,49 @@
 "use client";
 
-import React from "react";
-import { Briefcase, X, ExternalLink, Calendar, CheckCircle2 } from "lucide-react";
-import { ApplicationRecord } from "@/lib/types/application";
+import React, { useState } from "react";
+import { Briefcase, X, ExternalLink, Calendar, CheckCircle2, ChevronDown, RefreshCw } from "lucide-react";
+import { ApplicationRecord, ApplicationStatus } from "@/lib/types/application";
 
 interface ApplicationsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   applications: ApplicationRecord[];
   onFindJobs?: () => void;
+  onStatusChange?: (id: string, newStatus: ApplicationStatus) => Promise<void>;
+  onRefresh?: () => Promise<void>;
+  isRefreshing?: boolean;
 }
+
+const STATUS_OPTIONS: Array<{ value: ApplicationStatus; label: string; color: string }> = [
+  { value: "tracked", label: "Tracked", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+  { value: "submitted", label: "Submitted", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
+  { value: "interviewing", label: "Interviewing", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
+  { value: "offered", label: "Offered", color: "text-purple-400 bg-purple-500/10 border-purple-500/20" },
+  { value: "rejected", label: "Archived", color: "text-slate-400 bg-slate-500/10 border-slate-500/20" },
+];
 
 export const ApplicationsDrawer: React.FC<ApplicationsDrawerProps> = ({
   isOpen,
   onClose,
   applications,
   onFindJobs,
+  onStatusChange,
+  onRefresh,
+  isRefreshing,
 }) => {
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
   if (!isOpen) return null;
+
+  const handleSelectStatus = async (appId: string, status: ApplicationStatus) => {
+    if (!onStatusChange || updatingId) return;
+    setUpdatingId(appId);
+    try {
+      await onStatusChange(appId, status);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm animate-fade-in">
@@ -36,13 +62,28 @@ export const ApplicationsDrawer: React.FC<ApplicationsDrawerProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                title="Refresh application records"
+                disabled={isRefreshing}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-indigo-400" : ""}`} />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              title="Close drawer"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* List Content */}
@@ -70,45 +111,70 @@ export const ApplicationsDrawer: React.FC<ApplicationsDrawerProps> = ({
               )}
             </div>
           ) : (
-            applications.map((app) => (
-              <div
-                key={app.id}
-                className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-700 transition-all text-xs"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <h4 className="font-semibold text-slate-100 text-sm">{app.jobTitle}</h4>
-                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
-                    {app.status}
-                  </span>
+            applications.map((app) => {
+              const currentStatusConfig =
+                STATUS_OPTIONS.find((s) => s.value === app.status) || STATUS_OPTIONS[0];
+
+              return (
+                <div
+                  key={app.id}
+                  className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-700 transition-all text-xs"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="font-semibold text-slate-100 text-sm leading-snug">{app.jobTitle}</h4>
+
+                    {/* Interactive Status Selector */}
+                    {onStatusChange ? (
+                      <div className="relative inline-block shrink-0">
+                        <select
+                          value={app.status}
+                          disabled={updatingId === app.id}
+                          onChange={(e) => handleSelectStatus(app.id, e.target.value as ApplicationStatus)}
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border cursor-pointer outline-none transition-colors appearance-none pr-5 ${currentStatusConfig.color} disabled:opacity-50`}
+                        >
+                          {STATUS_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-200">
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 text-slate-400" />
+                      </div>
+                    ) : (
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${currentStatusConfig.color}`}>
+                        {app.status}
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="mt-1 text-xs text-slate-400 font-medium">{app.company} • {app.location}</p>
+
+                  <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/60 pt-2.5">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="h-3 w-3 text-indigo-400" />
+                      {new Date(app.applicationDate).toLocaleDateString()}
+                    </span>
+
+                    <a
+                      href={app.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-indigo-400 hover:underline"
+                    >
+                      <span>View Listing</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
                 </div>
-
-                <p className="mt-1 text-xs text-slate-400 font-medium">{app.company}</p>
-
-                <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/60 pt-2.5">
-                  <span className="flex items-center gap-1.5">
-                    <Calendar className="h-3 w-3 text-indigo-400" />
-                    {new Date(app.applicationDate).toLocaleDateString()}
-                  </span>
-
-                  <a
-                    href={app.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-indigo-400 hover:underline"
-                  >
-                    <span>View Listing</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
         {/* Footer Notice */}
         <div className="border-t border-slate-800 pt-3 text-[11px] text-slate-500 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-          <span>Recorded in CareerPilot AI tracker. Official submissions are completed on employer portals.</span>
+          <span>Authoritative records stored in persistent database. Official submissions are completed on employer portals.</span>
         </div>
       </div>
     </div>

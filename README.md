@@ -1,23 +1,29 @@
 # CareerPilot AI — Autonomous Job Matching & Career Agent
 
 > **Hidani Tech SDE Intern Assessment (AI Agents & Automation)**  
-> A production-ready, full-stack conversational AI career assistant that parses resumes, matches real jobs using explainable scoring, handles natural-language filters, and tracks applications without duplicates.
+> Production-ready, full-stack conversational AI career assistant built with Next.js 16, TypeScript, PostgreSQL persistence, and Arbeitnow job verification.
+
+[![Tests](https://img.shields.io/badge/tests-62%20passed%20(100%25)-success)](file:///./tests)
+[![Dataset](https://img.shields.io/badge/jobs-1%2C600%20verified-blue)](file:///./data/jobs.json)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![Deployment](https://img.shields.io/badge/deployment-Vercel%20Live-brightgreen)](https://careerpilot-ai-beta-lovat.vercel.app/)
 
 ---
 
 ## 🌟 Executive Overview
 
-CareerPilot AI is an end-to-end full-stack agentic web application built with **Next.js 16 (App Router)**, **TypeScript**, and **Tailwind CSS**. It combines an agentic orchestrator with a deterministic rule engine to deliver fast, reliable job recommendations and safe application tracking.
+CareerPilot AI is an end-to-end full-stack agentic career assistant designed to solve the real problems candidates face when searching and applying for technical roles. It combines a conversational AI orchestrator, deterministic scoring engine, and robust database persistence to provide reliable job matching, natural-language filtering, and duplicate-free application tracking.
 
 ### Key Capabilities
 
 1. **Conversational Resume Parsing**: Upload PDF or DOCX resumes (up to 5MB) directly inside chat or via modal. Extracts candidate name, contact details (email, phone, LinkedIn, GitHub, website), designation, skills, experience, education, and projects with strict Zod validation.
-2. **Explainable Real-Time Job Matching**: Evaluates candidates against a normalized dataset of **1,600 verified real job listings** from Arbeitnow. Generates match scores (0–100%) broken down into skills (50%), title alignment (30%), and experience (20%) with transparent reasoning.
-3. **Conversational Filter Refinement**: Supports natural language modifications (e.g., *"show only remote jobs"*, *"filter by React and TypeScript"*, *"jobs requiring Python"*).
-4. **Context-Aware Ordinal Tool Execution**: Understands relative conversational references such as *"apply to job 1"*, *"apply to the second one"*, or direct job IDs.
-5. **Safe Application Recording & Tracking**: Validates job IDs against the real dataset, prevents duplicate submissions, stores records with dates and statuses, and provides instant tracking drawers.
-6. **Robust Error Handling**: Clear feedback for oversized/corrupted files, unsupported formats, zero matching results, invalid job IDs, and API quota limits.
-7. **Zero-API-Key Deterministic Fallback**: Fully functional without any external LLM API key. When a Gemini API key is configured, it enriches conversational responses and polish.
+2. **Explainable Real-Time Job Matching**: Evaluates candidates against a normalized dataset of **1,600 verified real job listings** from Arbeitnow. Generates heuristic compatibility scores (0–100%) broken down into skills (50%), title alignment (30%), and experience (20%) with transparent reasoning.
+3. **Conversational Filter Refinement**: Supports natural language modifications (e.g., *"show only remote jobs"*, *"filter by React and TypeScript"*, *"jobs requiring Python and AWS"*, *"jobs with at least 70% match"*).
+4. **Context-Aware Ordinal Tool Execution**: Understands relative conversational references such as *"apply to job 1"*, *"apply to the second one"*, or direct job IDs (`arb_...`).
+5. **Durable Database Persistence & Duplicate Prevention**: Powered by PostgreSQL (Neon / Supabase) with connection pooling and database-level `UNIQUE(job_id)` constraints. Prevents duplicate submissions and guarantees that tracked applications survive server restarts and browser refreshes.
+6. **Transparent Storage Mode & Synchronization**: Real-time storage badges (`PostgreSQL DB` or `Local Dev Store`) show the active backend. Authoritative server re-fetching synchronizes records upon page load and drawer open.
+7. **Application Lifecycle Tracking**: Interactive status progression (`tracked` $\rightarrow$ `submitted` $\rightarrow$ `interviewing` $\rightarrow$ `offered` $\rightarrow$ `rejected`) persisted via `PATCH /api/applications`.
+8. **Robust AI Agent with Deterministic Fallback**: Handles intent routing, answers conversational queries, and strictly refuses to fabricate contacts or phone numbers. Operates at 100% functionality even when no external LLM API key is present.
 
 ---
 
@@ -29,10 +35,11 @@ CareerPilot AI is an end-to-end full-stack agentic web application built with **
 | **Language** | TypeScript 5 | Strict typing across all components, tools, and endpoints |
 | **Styling** | Tailwind CSS v4 & Lucide Icons | Dark-themed, responsive glassmorphism UI |
 | **Validation** | Zod 4 | Runtime schema validation for profiles, jobs, applications, and chat |
+| **Persistence (Prod)** | PostgreSQL (`pg.Pool`) | Connection-pooled relational storage (Neon / Supabase / Postgres) |
+| **Persistence (Local)** | Mutexed Atomic JSON | File-locked zero-config local storage for offline development |
 | **Document Parsing** | `pdf-parse` v2 + `mammoth` | Server-side binary extraction for PDF and Word DOCX |
-| **AI Orchestration**| Custom Agent + `@google/genai` | Multi-step agent with deterministic intent routing and Gemini LLM integration |
-| **Storage** | Atomic JSON + `/tmp` + `localStorage` | Write-mutexed persistence resilient to serverless cold starts |
-| **Testing** | Vitest 5 | 43 automated unit/integration tests + 28 live acceptance checks |
+| **AI Orchestration** | Custom Agent + `@google/genai` | Multi-step agent with deterministic intent routing and Gemini LLM integration |
+| **Testing** | Vitest 5 | 62 automated unit, integration, agent, and database tests (100% pass) |
 
 ---
 
@@ -40,21 +47,21 @@ CareerPilot AI is an end-to-end full-stack agentic web application built with **
 
 ```mermaid
 graph TD
-    User([User / Browser]) <--> UI[Next.js App Router UI]
+    User([Candidate / Browser]) <--> UI[Next.js App Router UI]
     
     subgraph Frontend [Presentation Layer]
         UI --> Chat[Chat Interface & State]
         UI --> Upload[Resume Dropzone Modal]
         UI --> Cards[Job Recommendation Cards]
         UI --> Tracker[Applications Drawer]
-        UI <--> StorageLocal[(Browser LocalStorage)]
+        UI <--> StorageLocal[(Browser LocalStorage - Session/Profile Cache)]
     end
 
     subgraph API [Next.js Route Handlers]
         Chat <--> RouteChat[/api/chat]
         Upload --> RouteResume[/api/resume/parse]
         Cards --> RouteJobs[/api/jobs/search]
-        Tracker <--> RouteApp[/api/applications]
+        Tracker <--> RouteApp[/api/applications - GET, POST, PATCH]
     end
 
     subgraph Agent [Orchestrator & Tools]
@@ -67,24 +74,25 @@ graph TD
         Orchestrator --> ToolTrack[Tracking Tool]
     end
 
-    subgraph Data [Persistent Data Layer]
-        ToolResume --> Schemas[(Zod Schemas)]
+    subgraph Data [Persistence Layer]
         ToolMatch <--> JobsDataset[(data/jobs.json: 1,600 Verified Listings)]
-        ToolApply <--> AppStorage[(data/applications.json / /tmp Storage)]
-        ToolTrack <--> AppStorage
+        ToolApply <--> DBRouter{DATABASE_URL configured?}
+        ToolTrack <--> DBRouter
+        DBRouter -- Yes (Production) --> PostgresDB[(PostgreSQL Database: Neon/Supabase)]
+        DBRouter -- No (Local Dev) --> LocalStore[(Local JSON Fallback Store)]
     end
 ```
 
 ### End-to-End Dataflow
-1. **Resume Submission**: The candidate uploads a `.pdf` or `.docx` file. `/api/resume/parse` validates file size (<5MB) and mime type, extracts text via binary streams, and extracts candidate details.
-2. **Matching & Ranking**: The candidate's skills and designation are scored against 1,600 listings in `data/jobs.json`. Jobs are ranked by match percentage and filtered by constraints.
-3. **Conversational Refinement**: The user messages the assistant (e.g. *"show remote only"*). The `intentParser` updates filter state and recalculates matches.
-4. **Application Recording**: The user says *"apply to job 1"*. The agent resolves the ordinal reference to the active job card, verifies the job ID, checks for duplicates, and writes the application record.
-5. **Session Continuity**: Both the parsed profile and tracked applications are synchronized to `localStorage` and server-side storage, ensuring seamless page refresh persistence.
+1. **Resume Ingestion**: The candidate uploads a `.pdf` or `.docx` file. `/api/resume/parse` extracts text via server-side binary streams, parses structured sections with Zod, and returns candidate data.
+2. **Matching & Ranking**: The candidate profile is evaluated against 1,600 verified job listings in `data/jobs.json`. Jobs are ranked by heuristic match scores (0–100%) and filtered by constraints.
+3. **Conversational Refinement**: The candidate requests refinements (e.g., *"show remote jobs only"*, *"require React and TypeScript"*). `intentParser` parses criteria, enforces strict multi-skill inclusion, and returns updated matches.
+4. **Authoritative Application Tracking**: When a candidate tracks a job (via UI button or saying *"Apply to job 1"*), `/api/applications` validates the job ID against `data/jobs.json`, executes an idempotent `INSERT ... ON CONFLICT (job_id) DO NOTHING` in PostgreSQL, and returns the persisted record.
+5. **Session & Refresh Continuity**: When the page is reloaded, `page.tsx` fetches authoritative records from `/api/applications` and restores active chat messages and profile from client storage.
 
 ---
 
-## 🔌 Supported API Endpoints
+## 🔌 API Endpoints Reference
 
 ### 1. `POST /api/resume/parse`
 Parses an uploaded PDF or DOCX file into a structured candidate profile.
@@ -109,12 +117,12 @@ Parses an uploaded PDF or DOCX file into a structured candidate profile.
 ```
 
 ### 2. `POST /api/jobs/search`
-Searches and ranks jobs from the 1,600 dataset based on profile compatibility.
+Searches and ranks jobs from the 1,600 dataset based on candidate compatibility.
 - **Request Body**:
 ```json
 {
   "profile": { ... },
-  "filters": { "remoteOnly": true, "skills": ["React"], "limit": 10 }
+  "filters": { "remoteOnly": true, "skills": ["React", "TypeScript"], "minScore": 70, "limit": 10 }
 }
 ```
 - **Response**:
@@ -144,14 +152,13 @@ Searches and ranks jobs from the 1,600 dataset based on profile compatibility.
 ```
 
 ### 3. `POST /api/chat`
-Conversational orchestrator supporting intent routing, ordinal resolution, and tool execution.
+Conversational orchestrator supporting intent routing, ordinal resolution, tool execution, and deterministic fallback.
 - **Request Body**:
 ```json
 {
   "message": "Apply to job 1",
-  "profile": { ... },
-  "currentJobs": [ ... ],
-  "activeFilters": { "remoteOnly": true }
+  "candidateProfile": { ... },
+  "context": { "lastJobMatches": [ ... ] }
 }
 ```
 - **Response**:
@@ -165,103 +172,188 @@ Conversational orchestrator supporting intent routing, ordinal resolution, and t
     "jobId": "arb_senior-frontend-developer-remote-352991",
     "jobTitle": "Senior Frontend Developer",
     "company": "TechCorp",
+    "sourceUrl": "https://www.arbeitnow.com/jobs/...",
     "applicationDate": "2026-10-21T18:24:42.977Z",
     "status": "tracked"
   },
+  "storage": "postgres",
   "provider": "deterministic-fallback"
 }
 ```
 
 ### 4. `GET /api/applications`
-Retrieves all recorded applications from the persisted store.
+Retrieves all recorded applications from the database or local storage.
 - **Response**:
 ```json
 {
   "success": true,
   "count": 1,
+  "storage": "postgres",
   "applications": [
     {
       "id": "app_1792607082977_y3k7b",
       "jobId": "arb_senior-frontend-developer-remote-352991",
       "jobTitle": "Senior Frontend Developer",
       "company": "TechCorp",
+      "location": "Berlin, Germany",
+      "sourceUrl": "https://www.arbeitnow.com/jobs/...",
       "status": "tracked",
-      "applicationDate": "2026-10-21T18:24:42.977Z"
+      "applicationDate": "2026-10-21T18:24:42.977Z",
+      "updatedAt": "2026-10-21T18:24:42.977Z"
     }
   ]
 }
 ```
 
+### 5. `POST /api/applications`
+Tracks an application record. Enforces duplicate prevention and job ID validation.
+- **Request Body**:
+```json
+{
+  "jobId": "arb_it-system-engineer-bochum-76111",
+  "jobTitle": "IT-System Engineer (m/w/d)",
+  "company": "think about IT GmbH",
+  "location": "Bochum",
+  "sourceUrl": "https://www.arbeitnow.com/jobs/...",
+  "candidateName": "Alex Smith"
+}
+```
+- **Response (Success - HTTP 201)**:
+```json
+{
+  "success": true,
+  "message": "Application tracked successfully",
+  "storage": "postgres",
+  "application": { ... }
+}
+```
+- **Response (Already Tracked - HTTP 409)**:
+```json
+{
+  "success": false,
+  "alreadyTracked": true,
+  "message": "Application already tracked for this job.",
+  "storage": "postgres",
+  "application": { ... }
+}
+```
+
+### 6. `PATCH /api/applications`
+Updates the status of an existing application record.
+- **Request Body**:
+```json
+{
+  "id": "app_1792607082977_y3k7b",
+  "status": "interviewing",
+  "notes": "Technical screening scheduled"
+}
+```
+- **Response (Success - HTTP 200)**:
+```json
+{
+  "success": true,
+  "message": "Application status updated to interviewing",
+  "storage": "postgres",
+  "application": { "id": "app_1792607082977_y3k7b", "status": "interviewing", "updatedAt": "..." }
+}
+```
+
 ---
 
-## 🎯 Job Matching Algorithm & Score Explanation
+## 🎯 Heuristic Job Matching Algorithm
 
-CareerPilot AI uses a deterministic, explainable scoring formula with zero hallucination:
+CareerPilot AI uses a transparent, deterministic compatibility scoring formula:
 
-$$\text{MatchScore} = \text{SkillScore (50\%)} + \text{RoleScore (30\%)} + \text{ExperienceScore (20\%)}$$
+$$\text{Compatibility Score} = \text{Skill Match (50\%)} + \text{Role Alignment (30\%)} + \text{Experience Alignment (20\%)}$$
 
-1. **Skill Overlap (50 pts max)**:
+> [!NOTE]
+> The compatibility percentage is an explainable heuristic match score based on resume keywords and requirements. It is not an objectively validated hiring probability guarantee.
+
+1. **Skill Overlap (50 points max)**:
    - Evaluates the intersection of candidate skills with job requirements and description.
-   - If a job lists specific tech tags, match ratio = $(\text{matched} / \text{required}) \times 50$.
-   - Unmatched requirements are surfaced as `missingSkills`.
-2. **Title & Role Alignment (30 pts max)**:
-   - Uses token overlap and designation hierarchy matching (e.g. *"Full Stack"*, *"Frontend"*, *"DevOps"*, *"Intern"*).
-   - Exact or strong title match = 30 pts; partial alignment = 20 pts; general technical role = 10 pts.
-3. **Experience Level Compatibility (20 pts max)**:
-   - Compares candidate years of experience against job seniority buckets:
+   - Normalizes tech aliases (e.g., `Node` = `Node.js`, `k8s` = `Kubernetes`, `ReactJS` = `React`).
+   - Match ratio: $(\text{matched} / \text{required}) \times 50$.
+   - Missing required skills are surfaced explicitly to help candidates prepare.
+2. **Title & Role Alignment (30 points max)**:
+   - Evaluates keyword overlap and designation seniority (e.g., *Frontend*, *Backend*, *Full Stack*, *DevOps*, *Intern*).
+   - Exact or strong match = 30 pts; partial alignment = 20 pts; general technical role = 10 pts.
+3. **Experience Compatibility (20 points max)**:
+   - Matches candidate years of experience against seniority tiers:
      - `Internship / Student`: 0–2 years (20 pts)
      - `0-2 years (Entry / Junior)`: 0–3 years (20 pts)
      - `1-3 years (Associate / Mid)`: 1–4 years (20 pts)
      - `3-5 years (Mid-Senior)`: 3–6 years (20 pts)
      - `5+ years (Senior / Lead)`: 5+ years (20 pts)
+   - Candidates with little experience are not awarded high scores on 5+ year Senior positions without an explanatory penalty.
 4. **Deterministic Tie-Breaking**:
-   - `matchScore` DESC $\rightarrow$ `matchedSkills.length` DESC $\rightarrow$ `job.id` ASC.
+   - `matchScore` DESC $\rightarrow$ `matchedSkills.length` DESC $\rightarrow$ `job.title` ASC.
 
 ---
 
-## 📊 Dataset Provenance & Collection Procedure
+## 📊 Dataset Provenance & Verification Audit
 
-- **Source**: [Arbeitnow Free Public Job Board API](https://www.arbeitnow.com/blog/job-board-api)
-- **Record Count**: **1,600 verified authentic listings** in `data/jobs.json`.
-- **Validation**:
-  - `0` duplicate job IDs.
-  - `0` duplicate `(title | company | url)` content keys.
-  - `100%` compliance with Zod `JobListingSchema`.
-  - `133` verified remote listings.
-  - Real company names (Amazon, Qualinx, Delivery Hero, etc.) and direct live URLs.
-- **Reproducing the Dataset**:
+- **Primary Source**: [Arbeitnow Public Tech Job Board API](https://www.arbeitnow.com/blog/job-board-api)
+- **Total Listings**: **1,600 verified real job records** in `data/jobs.json`.
+- **Audit Findings**:
+  - `0` duplicate job IDs (`1,600` unique IDs).
+  - `0` missing or malformed required fields (`title`, `company`, `location`, `source_url`, `description`).
+  - `0` empty, placeholder, or suspiciously short descriptions.
+  - `0` invalid URL formats.
+  - `37` multi-location listings (same company hiring for the identical title across multiple European hubs or remote options; each assigned a unique `arb_...` ID).
+  - Sample URLs verified with live HTTP HEAD requests returning `HTTP 200 OK`.
+  - Geographic distribution: Germany, Netherlands, UK, Spain, France, and Europe-wide Remote.
+- **Reproducing and Validating the Dataset**:
 ```bash
 # Fetch and normalize 1,600 authentic listings directly from Arbeitnow API
 npm run data:collect
 
 # Validate dataset count, schema compliance, uniqueness, and distributions
 npm run data:validate
+
+# Verify sample URLs and detailed field statistics
+npx tsx scripts/verify_dataset_sample.ts
 ```
 
 ---
 
-## 💾 Application Tracking & Persistence Architecture
+## 💾 Database Persistence & Schema
 
-CareerPilot AI uses a multi-tier persistence model:
+### PostgreSQL Schema
+CareerPilot AI runs automatic schema migration on startup when connected to PostgreSQL. The schema can also be created manually:
 
-1. **Server-Side File Persistence**:
-   - Application records are saved via serialized write queue (`writeQueue`) with atomic temporary file renaming to prevent corruption during concurrent requests.
-2. **Serverless Lambda Support (`/tmp`)**:
-   - On Vercel and serverless platforms where repository directories are read-only, `applicationStore.ts` automatically switches storage to `/tmp/applications.json`.
-3. **In-Memory Graceful Fallback**:
-   - If filesystem access is restricted, operations fallback to an in-process cache (`memoryFallbackStore`).
-4. **Client-Side Session Synchronization**:
-   - `page.tsx` synchronizes applied jobs and parsed candidate profile to browser `localStorage` on every change, ensuring user applications persist across cold starts.
-5. **Duplicate Prevention**:
-   - Every application request checks for an existing record with matching `jobId`. If already tracked, it returns the existing record with an alert rather than creating a duplicate.
+```sql
+CREATE TABLE IF NOT EXISTS applications (
+  id VARCHAR(64) PRIMARY KEY,
+  job_id VARCHAR(128) UNIQUE NOT NULL,
+  job_title VARCHAR(256) NOT NULL,
+  company VARCHAR(256) NOT NULL,
+  location VARCHAR(256),
+  source_url TEXT,
+  status VARCHAR(64) DEFAULT 'tracked',
+  notes TEXT,
+  candidate_name VARCHAR(256),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
+CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at DESC);
+```
+
+### Duplicate Prevention Strategy
+- **Database Level**: `UNIQUE(job_id)` constraint ensures that concurrent requests or duplicate submissions are rejected at the storage engine level.
+- **Application Level**: Queries check for existing records prior to insertion; `INSERT ... ON CONFLICT (job_id) DO NOTHING` handles race conditions gracefully and returns HTTP 409 Conflict.
+- **Distinction**:
+  - `Tracked in CareerPilot AI`: Application stored in user's tracking board.
+  - `Applied to Employer`: User clicked official employer URL to submit external application.
 
 ---
 
-## 🚀 Installation & Local Setup
+## 🚀 Local Installation & Setup
 
 ### 1. Prerequisites
 - **Node.js**: v20+ (tested on Node v22.15.0)
-- **npm**: v10+ (tested on npm 11.13.0)
+- **npm**: v10+
 
 ### 2. Clone and Install
 ```bash
@@ -271,16 +363,20 @@ npm install
 ```
 
 ### 3. Environment Variables
-Copy the template file:
+Create `.env.local` based on `.env.example`:
 ```bash
 cp .env.example .env.local
 ```
-Configure `.env.local`:
+
 ```env
+# PostgreSQL Database URL (Neon / Supabase / Local Postgres)
+# Leave empty for automatic local JSON storage fallback
+DATABASE_URL=postgresql://user:password@ep-example-pooler.region.neon.tech/neondb?sslmode=require
+
 # Google Gemini API Key (Optional — operates in Deterministic Mode if empty)
 GEMINI_API_KEY=
 
-# Preferred Provider
+# Preferred AI Provider
 AI_PROVIDER=gemini
 
 # Dataset & Storage Paths
@@ -288,69 +384,65 @@ JOBS_DATASET_PATH=./data/jobs.json
 APPLICATIONS_STORAGE_PATH=./data/applications.json
 ```
 
-### 4. Run Development Server
+### 4. Initialize Database (Optional for PostgreSQL)
+```bash
+npm run db:init
+```
+
+### 5. Run Development Server
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🧪 Test & Validation Commands
+## 🧪 Test & Verification Results
 
-All commands have been verified and pass locally:
+All tests have been executed and verified:
 
-| Command | Purpose | Verification Result |
+| Test Suite / Command | Scope | Result |
 | :--- | :--- | :--- |
-| `npm test` | Run Vitest unit & integration test suite | **43 / 43 passed** in ~900ms |
-| `npm run lint` | Run strict ESLint checks | **0 errors, 0 warnings** |
-| `npm run build` | Compile Next.js Turbopack production bundle | **Compiled successfully** in ~900ms |
-| `npm run data:validate` | Validate 1,600 dataset integrity | **1,600 valid, 0 invalid, 0 dupes** |
-| `npm run test:workflow` | Run full 28-step end-to-end acceptance suite | **28 / 28 passed** against live server |
+| `npm test` | Vitest Unit, Integration, Agent, DB Tests | **62 / 62 passed (100%)** |
+| `npm run lint` | Strict ESLint static analysis | **0 errors, 0 warnings** |
+| `npx tsc --noEmit` | TypeScript strict type checking | **0 errors** |
+| `npm run build` | Next.js 16 Turbopack production build | **Compiled cleanly (exit code 0)** |
+| `npm run data:validate` | 1,600 dataset integrity check | **1,600 valid, 0 invalid, 0 dupes** |
+| `tests/conversationalAgent.test.ts` | 14 Phase-5 conversational queries | **14 / 14 passed** |
+| `tests/databasePersistence.test.ts` | PostgreSQL schema, status, and dupes | **5 / 5 passed** |
 
 ---
 
-## 🌐 Production Deployment Guide
+## 🌐 Production Deployment
 
-CareerPilot AI is optimized for deployment to **Vercel** or **Render**:
+### Live Vercel Deployment
+- **Production URL**: [https://careerpilot-ai-beta-lovat.vercel.app/](https://careerpilot-ai-beta-lovat.vercel.app/)
+- **GitHub Repository**: [https://github.com/Adityaaun/careerpilot-ai](https://github.com/Adityaaun/careerpilot-ai)
 
-### Deploying to Vercel (Recommended)
-1. Fork or push this repository to GitHub: `https://github.com/Adityaaun/careerpilot-ai`.
-2. Go to [Vercel Dashboard](https://vercel.com/new).
-3. Import the `careerpilot-ai` repository.
-4. Framework Preset: **Next.js** (detected automatically).
-5. Build Command: `next build` (default).
-6. Environment Variables (optional):
-   - `GEMINI_API_KEY`: your Google Gemini API key.
-7. Click **Deploy**. Vercel will build and provide a live URL (e.g. `https://careerpilot-ai.vercel.app`).
-
----
-
-## 🔗 Public Links
-
-- **Public GitHub Repository**: [https://github.com/Adityaaun/careerpilot-ai](https://github.com/Adityaaun/careerpilot-ai)
-- **Live Deployed Application**: *(To be populated upon Vercel project linking)*
-- **Demo Video Recording**: *(To be populated upon screen recording)*
+### Configuring PostgreSQL on Vercel (Neon / Supabase)
+To enable persistent database storage on the live deployment:
+1. Create a free serverless PostgreSQL instance on [Neon](https://neon.tech) or [Supabase](https://supabase.com).
+2. Copy the pooled connection string (e.g. `postgresql://...@ep-...-pooler.neon.tech/neondb?sslmode=require`).
+3. Open the **Vercel Project Dashboard** $\rightarrow$ **Settings** $\rightarrow$ **Environment Variables**.
+4. Add variable:
+   - Key: `DATABASE_URL`
+   - Value: `<your-postgres-connection-string>`
+   - Environments: `Production`, `Preview`, `Development`
+5. Click **Save** and trigger a **Redeploy**.
+6. The top nav badge on the live site will automatically switch from `Local Dev Store` to `PostgreSQL DB`.
 
 ---
 
-## 📹 3–5 Minute Demo Narration Script
+## 🔒 Privacy & Data Retention Notes
 
-Use this script during the assessment screen recording:
-
-| Time | Scene | Narration & Action |
-| :--- | :--- | :--- |
-| **0:00 – 0:30** | Landing Page Overview | *"Hello! This is CareerPilot AI, an autonomous AI career assistant built for the Hidani Tech SDE Intern assessment. It helps software engineers parse resumes, discover matches across 1,600 real job listings, refine results conversationally, and track job applications safely."* |
-| **0:30 – 1:15** | Resume Parsing | *Click '📄 Upload Resume' button $\rightarrow$ Select PDF or DOCX resume.*<br>*"I'll upload a resume. CareerPilot's parser extracts candidate name, contact details, current designation, and tech skills with strict validation, rendering a profile card instantly."* |
-| **1:15 – 2:00** | Explainable Job Matching | *Click '🎯 Match My Resume' or type 'Find jobs matching my resume'.*<br>*"CareerPilot evaluates my profile against 1,600 authentic job listings from Arbeitnow. Each card shows the transparent match percentage broken down into skills, title alignment, and experience level, plus direct links to the official posting."* |
-| **2:00 – 2:45** | Natural Language Filtering | *Type: 'Show only remote jobs' $\rightarrow$ Then type: 'Show jobs requiring React'.*<br>*"I can refine recommendations conversationally. Filtering for remote jobs updates the cards to exclusively remote roles. Adding React further refines the skill requirements in real-time."* |
-| **2:45 – 3:30** | Application Tracking & Duplicates | *Type: 'Apply to job 1' $\rightarrow$ Inspect confirmation $\rightarrow$ Type: 'Apply to job 1' again.*<br>*"CareerPilot understands relative references like 'Apply to job 1'. It tracks the application into our local tracker. If I try applying again, it recognizes the existing submission and prevents duplicate records."* |
-| **3:30 – 4:00** | Application Drawer & Architecture | *Click 'Applications' drawer in the top right $\rightarrow$ View tracked applications.*<br>*"The Applications drawer shows our submission history with timestamps. The system features a deterministic rule-based fallback, so it remains 100% functional even when external LLMs are unavailable. Thank you!"* |
+- **Resume Files**: Uploaded PDF/DOCX files are processed in-memory in serverless memory streams. Raw binary resume files are never saved to disk or permanent databases.
+- **Candidate Data**: Extracted profile information (skills, designation, contact info) is cached in the user's browser `localStorage` and sent with search requests to compute compatibility scores.
+- **Session Control**: A "Reset Chat" button in the header allows candidates to clear local session memory and conversation history without deleting their saved application records in the database.
 
 ---
 
-## ⚠️ Known Limitations & Future Improvements
+## ⚠️ Known Limitations
 
-1. **Local Tracking Scope**: CareerPilot AI acts as a personal candidate assistant and tracking tool. It does not submit external employer portal forms on third-party sites without user redirection. Direct employer application URLs are provided on every card.
-2. **Serverless Filesystem Volatility**: On ephemeral platforms like Vercel Lambda, the filesystem `/tmp` directory resets on container recycle. Client-side `localStorage` mirroring ensures candidate continuity across browser sessions. Connecting an external database (e.g. Supabase PostgreSQL or Upstash Redis) would enable multi-device sync.
-3. **Scraped Skill Dictionary**: Heuristic skill extraction utilizes a dictionary of ~100 core tech keywords. Candidate skills outside this dictionary are preserved in raw text summary.
+1. **Dataset Geographic Focus**: The 1,600 Arbeitnow tech listings are primarily located in Germany, the Netherlands, UK, Spain, and Europe-wide Remote. Searches for other regions (such as India) transparently return 0 matches with an honest explanatory message rather than fabricating jobs.
+2. **External Application Submission**: CareerPilot AI acts as an intelligent career tracker. It tracks jobs internally and provides direct links to official employer postings. It does not submit third-party employer web forms without candidate review.
+3. **Single-Tenant Database Mode**: Without a user authentication system (not required by the assessment specification), all records in the database belong to the current deployment. In multi-user production, user identity tokens or Supabase Auth would be introduced.

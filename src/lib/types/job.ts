@@ -31,5 +31,7 @@ export interface JobFilterCriteria {
   location?: string;
   minExperienceYears?: number;
   maxExperienceYears?: number;
+  experienceLevel?: string;
+  minScore?: number;
   limit?: number;
 }

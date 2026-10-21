@@ -189,10 +189,22 @@ export function matchJobs(
 
     // Required skills filter
     if (filter?.skills && filter.skills.length > 0) {
-      const filterSkills = filter.skills.map(normalize);
       const jobAllText = `${job.title} ${job.skills.join(" ")} ${job.description}`.toLowerCase();
-      const hasSkill = filterSkills.some((fs) => jobAllText.includes(fs));
-      if (!hasSkill) return false;
+      const hasAllSkills = filter.skills.every((s) => {
+        const sLower = s.toLowerCase();
+        return jobAllText.includes(sLower) || normalize(jobAllText).includes(normalize(sLower));
+      });
+      if (!hasAllSkills) return false;
+    }
+
+    // Experience level filter (e.g. "intern", "junior", "senior")
+    if (filter?.experienceLevel && filter.experienceLevel.trim().length > 0) {
+      const expQuery = filter.experienceLevel.toLowerCase();
+      const jobExp = job.experience_required.toLowerCase();
+      const jobTitle = job.title.toLowerCase();
+      if (!jobExp.includes(expQuery) && !jobTitle.includes(expQuery)) {
+        return false;
+      }
     }
 
     // Free text query filter
@@ -207,9 +219,14 @@ export function matchJobs(
   });
 
   // 2. Score and Rank
-  const scored = filtered.map((job) => scoreJobMatch(profile, job));
+  let scored = filtered.map((job) => scoreJobMatch(profile, job));
 
-  // 3. Deterministic Sorting: matchScore DESC -> matchedSkills.length DESC -> job.id ASC
+  // 3. Min matchScore threshold filter (e.g. "at least 70% match")
+  if (filter?.minScore !== undefined && filter.minScore > 0) {
+    scored = scored.filter((item) => item.matchScore >= filter.minScore!);
+  }
+
+  // 4. Deterministic Sorting: matchScore DESC -> matchedSkills.length DESC -> job.id ASC
   scored.sort((a, b) => {
     if (b.matchScore !== a.matchScore) {
       return b.matchScore - a.matchScore;

@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 
+import { JobListing } from "../src/lib/types/job";
+
 const LIVE_URL = "https://careerpilot-ai-beta-lovat.vercel.app";
 
 async function runAudit() {
@@ -8,7 +10,7 @@ async function runAudit() {
   console.log("Target:", LIVE_URL);
   const dir = path.join(process.cwd(), "tests", "fixtures", "synthetic");
 
-  let firstJob: any = null;
+  let firstJob: JobListing | null = null;
 
   // 1. GET /api/jobs/search (Empty / default search)
   try {

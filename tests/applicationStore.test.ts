@@ -130,7 +130,7 @@ describe("Application Store Tool", () => {
     await recordApplication({ jobId: "job_test_1" }, testStoragePath, mockTestJobs);
     await recordApplication({ jobId: "job_test_2" }, testStoragePath, mockTestJobs);
 
-    const listed = listApplications(testStoragePath, mockTestJobs);
+    const listed = await listApplications(testStoragePath, mockTestJobs);
     expect(listed.length).toBe(2);
     expect(listed[0].jobListing?.title).toBe("Full Stack Engineer");
     expect(listed[1].jobListing?.title).toBe("DevOps Specialist");

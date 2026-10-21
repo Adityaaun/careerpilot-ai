@@ -8,6 +8,7 @@ export type UserIntent =
   | "refine_search"
   | "apply_to_job"
   | "track_applications"
+  | "contact_query"
   | "help"
   | "unknown";
 
@@ -28,7 +29,7 @@ const COMMON_SKILLS = [
   "Django", "FastAPI", "Flask", "Java", "Spring Boot", "C++", "C#", ".NET", "Go", "Golang",
   "Rust", "Ruby", "Rails", "PHP", "Laravel", "SQL", "PostgreSQL", "MySQL", "MongoDB", "Redis",
   "AWS", "Azure", "GCP", "Docker", "Kubernetes", "GraphQL", "Tailwind", "Tailwind CSS",
-  "Vue", "Angular", "DevOps", "CI/CD", "Git"
+  "Vue", "Angular", "DevOps", "CI/CD", "Git", "Haskell", "Scala", "Elixir", "COBOL"
 ];
 
 const ORDINAL_MAP: Record<string, number> = {
@@ -87,7 +88,18 @@ export function parseUserMessage(
 
   const filterCriteria: JobFilterCriteria = {};
 
-  // 1. Check Apply to Job intent
+  // 1. Check Contact / Phone Number Query (Guardrail: Never invent phone numbers)
+  if (
+    /\b(phone|phone number|telephone|mobile number|call you|reach you by phone|your number)\b/i.test(lower)
+  ) {
+    return {
+      intent: "contact_query",
+      filterCriteria,
+      confidence: 0.95,
+    };
+  }
+
+  // 2. Check Apply to Job intent
   const applyMatch = lower.match(/\b(apply|apply to|track|submit application for)\b/i);
   if (applyMatch) {
     // Look for direct job ID (e.g. arb_xxx or job_xxx)
@@ -129,7 +141,7 @@ export function parseUserMessage(
     };
   }
 
-  // 2. Check Track Applications intent
+  // 3. Check Track Applications intent
   if (
     lower.includes("applied") ||
     lower.includes("my applications") ||
@@ -145,7 +157,7 @@ export function parseUserMessage(
     };
   }
 
-  // 3. Check Resume Upload / Status intent (when not asking for job searches or matching)
+  // 4. Check Resume Upload / Status intent (when not asking for job searches or matching)
   if (
     !lower.includes("job") &&
     !lower.includes("match") &&
@@ -167,7 +179,7 @@ export function parseUserMessage(
     };
   }
 
-  // 4. Check Greetings
+  // 5. Check Greetings
   if (
     /^(hi|hello|hey|good morning|good afternoon|good evening|greetings)\b/i.test(lower) &&
     !lower.includes("job") &&
@@ -180,7 +192,7 @@ export function parseUserMessage(
     };
   }
 
-  // 5. Check Help
+  // 6. Check Help
   if (
     lower === "help" ||
     lower === "?" ||
@@ -194,7 +206,7 @@ export function parseUserMessage(
     };
   }
 
-  // 6. Entity Extraction for Job Searches and Refinements
+  // 7. Entity Extraction for Job Searches and Refinements
   // Remote filter
   if (
     lower.includes("remote") ||
@@ -205,7 +217,26 @@ export function parseUserMessage(
     filterCriteria.remoteOnly = true;
   }
 
-  // Skills filter
+  // Experience level filter (e.g. internships, entry-level, senior)
+  if (lower.includes("intern") || lower.includes("student")) {
+    filterCriteria.experienceLevel = "intern";
+    filterCriteria.query = "intern";
+  } else if (lower.includes("entry-level") || lower.includes("entry level") || lower.includes("junior")) {
+    filterCriteria.experienceLevel = "entry";
+  } else if (lower.includes("senior") || lower.includes("lead") || lower.includes("principal")) {
+    filterCriteria.experienceLevel = "senior";
+  }
+
+  // Min match score filter (e.g. "at least 70% match", "70% match")
+  const minScoreMatch = lower.match(/\b(?:at least|minimum|min|>=?)\s*(\d+)%\s*(?:match)?\b|\b(\d+)%\s*(?:match|compatibility)\b/);
+  if (minScoreMatch) {
+    const scoreVal = parseInt(minScoreMatch[1] || minScoreMatch[2], 10);
+    if (!isNaN(scoreVal) && scoreVal > 0 && scoreVal <= 100) {
+      filterCriteria.minScore = scoreVal;
+    }
+  }
+
+  // Skills filter from common list
   const extractedSkills: string[] = [];
   for (const skill of COMMON_SKILLS) {
     const reg = new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
@@ -213,6 +244,18 @@ export function parseUserMessage(
       extractedSkills.push(skill);
     }
   }
+
+  // Skills filter from "requiring X and Y" syntax
+  const requiringMatch = text.match(/\brequiring\s+([A-Za-z0-9#+.]+(?:\s+(?:and|&|,)\s+[A-Za-z0-9#+.]+)*)/i);
+  if (requiringMatch) {
+    const rawSkills = requiringMatch[1].split(/\s+(?:and|&|,)\s+/i).map((s) => s.trim());
+    for (const rs of rawSkills) {
+      if (rs.length > 1 && !extractedSkills.some((s) => s.toLowerCase() === rs.toLowerCase())) {
+        extractedSkills.push(rs);
+      }
+    }
+  }
+
   if (extractedSkills.length > 0) {
     filterCriteria.skills = extractedSkills;
   }
@@ -223,13 +266,20 @@ export function parseUserMessage(
     filterCriteria.limit = Math.min(Math.max(parseInt(limitMatch[1], 10), 1), 30);
   }
 
-  // Location filter (e.g. "in Berlin", "in Bangalore", "in Munich", "in Germany")
-  const locMatch = text.match(/\bin\s+([A-Z][a-zA-Z\s]+?)(?:$|[.,;])/);
-  if (locMatch && !locMatch[1].toLowerCase().includes("remote")) {
-    filterCriteria.location = locMatch[1].trim();
+  // Location filter (e.g. "in India", "in Berlin", "in Germany", "in Munich", "in London")
+  const locMatch = text.match(/\bin\s+([A-Za-z\s]+?)(?:$|[.,;!?])/i);
+  if (locMatch) {
+    const candidateLoc = locMatch[1].trim();
+    const blacklist = [
+      "the", "a", "an", "all", "our", "my", "your", "remote", "general",
+      "software", "tech", "total", "engineering", "short", "detail", "english", "german"
+    ];
+    if (!blacklist.includes(candidateLoc.toLowerCase()) && candidateLoc.length >= 2) {
+      filterCriteria.location = candidateLoc;
+    }
   }
 
-  // 7. Check if Refine Search vs New Search
+  // 8. Check if Refine Search vs New Search
   const isRefineKeyword =
     lower.includes("only") ||
     lower.includes("also") ||
@@ -246,7 +296,7 @@ export function parseUserMessage(
     };
   }
 
-  // 8. General Job Search check
+  // 9. General Job Search check
   if (
     lower.includes("job") ||
     lower.includes("match") ||
@@ -254,7 +304,11 @@ export function parseUserMessage(
     lower.includes("developer") ||
     lower.includes("engineer") ||
     lower.includes("position") ||
+    lower.includes("internship") ||
+    lower.includes("hiring") ||
     filterCriteria.remoteOnly ||
+    filterCriteria.location !== undefined ||
+    filterCriteria.minScore !== undefined ||
     (filterCriteria.skills && filterCriteria.skills.length > 0)
   ) {
     return {

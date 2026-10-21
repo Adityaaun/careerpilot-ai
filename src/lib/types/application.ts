@@ -18,7 +18,8 @@ export const ApplicationRecordSchema = z.object({
   company: z.string().min(1, "Company name is required"),
   location: z.string().default("Remote"),
   sourceUrl: z.string().url("Must be valid URL"),
-  applicationDate: z.string(), // ISO string date
+  applicationDate: z.string(), // ISO string date (created_at)
+  updatedAt: z.string().optional(), // ISO string date
   status: ApplicationStatusSchema.default("tracked"),
   notes: z.string().optional(),
   candidateName: z.string().optional(),

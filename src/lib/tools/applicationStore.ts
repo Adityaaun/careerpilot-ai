@@ -4,15 +4,47 @@ import {
   ApplicationRecord,
   ApplicationRecordSchema,
   ApplicationSubmissionResult,
+  ApplicationStatus,
 } from "../types/application";
 import { JobListing } from "../types/job";
 import { getJobDataset } from "./jobMatcher";
+import {
+  isPostgresConfigured,
+  pgGetApplications,
+  pgInsertApplication,
+  pgUpdateApplicationStatus,
+} from "../db/postgres";
 
-// In-process write lock queue to serialize concurrent operations safely
+// In-process write lock queue to serialize concurrent operations safely in local mode
 let writeQueue: Promise<unknown> = Promise.resolve();
 
-// In-memory fallback if file system is read-only (e.g. edge lambdas)
+// In-memory fallback if file system is read-only in local dev mode
 const memoryFallbackStore: ApplicationRecord[] = [];
+
+export interface StorageStatus {
+  backend: "postgres" | "local_fallback";
+  isPersistent: boolean;
+  message: string;
+}
+
+/**
+ * Returns current active storage backend status
+ */
+export function getStorageStatus(): StorageStatus {
+  if (isPostgresConfigured()) {
+    return {
+      backend: "postgres",
+      isPersistent: true,
+      message: "Connected to persistent PostgreSQL database.",
+    };
+  }
+  return {
+    backend: "local_fallback",
+    isPersistent: false,
+    message:
+      "Running on local filesystem fallback. DATABASE_URL is not set. Data will not persist across serverless restarts.",
+  };
+}
 
 function getStoragePath(customPath?: string): string {
   if (customPath) {
@@ -28,7 +60,7 @@ function getStoragePath(customPath?: string): string {
 }
 
 /**
- * Safely reads and validates application records from storage
+ * Safely reads and validates application records from local filesystem storage
  */
 export function readApplications(customPath?: string): ApplicationRecord[] {
   const filePath = getStoragePath(customPath);
@@ -85,7 +117,6 @@ export function readApplications(customPath?: string): ApplicationRecord[] {
     if ((err as Error).message.includes("malformed JSON")) {
       throw err;
     }
-    // Read-only filesystem fallback
     return [...memoryFallbackStore];
   }
 }
@@ -110,14 +141,14 @@ async function atomicWriteApplications(
     await fs.promises.writeFile(tempPath, serialized, "utf-8");
     await fs.promises.rename(tempPath, filePath);
   } catch {
-    // If filesystem write fails (e.g. read-only lambda), persist to memory fallback
     memoryFallbackStore.length = 0;
     memoryFallbackStore.push(...records);
   }
 }
 
 /**
- * Records a new application for a job with duplicate prevention and validation
+ * Records a new application for a job with duplicate prevention and validation.
+ * Uses PostgreSQL if configured, otherwise falls back to local file.
  */
 export async function recordApplication(
   params: {
@@ -150,14 +181,71 @@ export async function recordApplication(
     };
   }
 
-  // Synchronize entire critical section through writeQueue to prevent race conditions
+  const nowIso = new Date().toISOString();
+  const newRecord: ApplicationRecord = {
+    id: `app_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    jobId: job.id,
+    jobTitle: job.title,
+    company: job.company,
+    location: job.location,
+    sourceUrl: job.source_url,
+    applicationDate: nowIso,
+    updatedAt: nowIso,
+    status: "tracked",
+    notes: notes || undefined,
+    candidateName: candidateName || "Candidate",
+  };
+
+  const validation = ApplicationRecordSchema.safeParse(newRecord);
+  if (!validation.success) {
+    return {
+      success: false,
+      error: "Application record validation failed.",
+      externalNotice: "Internal error creating application record.",
+    };
+  }
+
+  // 2. Persist in PostgreSQL if configured (and not explicitly overridden by customStoragePath in tests)
+  if (isPostgresConfigured() && !customStoragePath) {
+    try {
+      const dbResult = await pgInsertApplication(validation.data);
+      if (dbResult.duplicate) {
+        const existing = dbResult.existingRecord || validation.data;
+        return {
+          success: false,
+          alreadyApplied: true,
+          record: existing,
+          error: `You have already recorded an application for "${job.title}" at ${job.company} on ${new Date(existing.applicationDate).toLocaleDateString()}.`,
+          externalNotice: `Duplicate prevented at database level. This application is already tracked. Official listing: ${job.source_url}`,
+        };
+      }
+
+      if (!dbResult.success) {
+        return {
+          success: false,
+          error: dbResult.error || "Database error saving application.",
+          externalNotice: "Database operation failed.",
+        };
+      }
+
+      return {
+        success: true,
+        alreadyApplied: false,
+        record: dbResult.record,
+        externalNotice: `Application tracked in CareerPilot AI. NOTE: This application is recorded in your persistent tracker. To submit your credentials directly to ${job.company}, visit their official listing at: ${job.source_url}`,
+      };
+    } catch (dbErr) {
+      console.error("[ApplicationStore] Database error during insert, falling back to local file:", dbErr);
+    }
+  }
+
+  // 3. Local File Fallback (or test customStoragePath)
   let outputResult!: ApplicationSubmissionResult;
 
   writeQueue = writeQueue.then(async () => {
-    // 2. Read existing records inside the synchronized critical section
     const existingRecords = readApplications(customStoragePath);
 
-    // 3. Duplicate Prevention Check
+    // Duplicate Prevention Check
     const alreadyAppliedRecord = existingRecords.find((r) => r.jobId === job.id);
     if (alreadyAppliedRecord) {
       outputResult = {
@@ -170,31 +258,7 @@ export async function recordApplication(
       return;
     }
 
-    // 4. Construct validated ApplicationRecord
-    const newRecord: ApplicationRecord = {
-      id: `app_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      jobId: job.id,
-      jobTitle: job.title,
-      company: job.company,
-      location: job.location,
-      sourceUrl: job.source_url,
-      applicationDate: new Date().toISOString(),
-      status: "tracked",
-      notes: notes || undefined,
-      candidateName: candidateName || "Candidate",
-    };
-
-    const validation = ApplicationRecordSchema.safeParse(newRecord);
-    if (!validation.success) {
-      outputResult = {
-        success: false,
-        error: "Application record validation failed.",
-        externalNotice: "Internal error creating application record.",
-      };
-      return;
-    }
-
-    // 5. Atomic Persist
+    // Persist
     existingRecords.push(validation.data);
     await atomicWriteApplications(existingRecords, customStoragePath);
 
@@ -211,13 +275,26 @@ export async function recordApplication(
 }
 
 /**
- * Lists all recorded applications joined with corresponding job listings
+ * Lists all recorded applications joined with corresponding job listings.
+ * Uses PostgreSQL if configured, otherwise falls back to local file.
  */
-export function listApplications(
+export async function listApplications(
   customStoragePath?: string,
   customJobs?: JobListing[]
-): Array<ApplicationRecord & { jobListing?: JobListing }> {
-  const records = readApplications(customStoragePath);
+): Promise<Array<ApplicationRecord & { jobListing?: JobListing }>> {
+  let records: ApplicationRecord[] = [];
+
+  if (isPostgresConfigured() && !customStoragePath) {
+    try {
+      records = await pgGetApplications();
+    } catch (err) {
+      console.error("[ApplicationStore] Failed to fetch applications from PostgreSQL:", err);
+      records = readApplications(customStoragePath);
+    }
+  } else {
+    records = readApplications(customStoragePath);
+  }
+
   const jobs = customJobs || getJobDataset();
   const jobsMap = new Map<string, JobListing>(jobs.map((j) => [j.id, j]));
 
@@ -225,4 +302,39 @@ export function listApplications(
     ...record,
     jobListing: jobsMap.get(record.jobId),
   }));
+}
+
+/**
+ * Updates an application status (e.g. "tracked" -> "submitted")
+ */
+export async function updateApplicationStatus(
+  id: string,
+  status: ApplicationStatus,
+  notes?: string,
+  customStoragePath?: string
+): Promise<ApplicationRecord | null> {
+  if (isPostgresConfigured() && !customStoragePath) {
+    try {
+      return await pgUpdateApplicationStatus(id, status, notes);
+    } catch (err) {
+      console.error("[ApplicationStore] Failed to update application in PostgreSQL:", err);
+    }
+  }
+
+  let updatedRecord: ApplicationRecord | null = null;
+  writeQueue = writeQueue.then(async () => {
+    const existing = readApplications(customStoragePath);
+    const idx = existing.findIndex((r) => r.id === id);
+    if (idx === -1) return;
+
+    existing[idx].status = status;
+    existing[idx].updatedAt = new Date().toISOString();
+    if (notes) existing[idx].notes = notes;
+
+    await atomicWriteApplications(existing, customStoragePath);
+    updatedRecord = existing[idx];
+  });
+
+  await writeQueue;
+  return updatedRecord;
 }

@@ -14,10 +14,11 @@ import {
   ChevronRight,
   ShieldCheck,
   CheckCircle2,
+  RotateCcw,
 } from "lucide-react";
 import { ParsedProfile } from "@/lib/types/resume";
 import { JobMatchResult, JobFilterCriteria } from "@/lib/types/job";
-import { ApplicationRecord } from "@/lib/types/application";
+import { ApplicationRecord, ApplicationStatus } from "@/lib/types/application";
 import { ProfileSummaryCard } from "@/components/ProfileSummaryCard";
 import { JobCard } from "@/components/JobCard";
 import { ResumeDropzoneModal } from "@/components/ResumeDropzoneModal";
@@ -52,6 +53,8 @@ export default function Home() {
   const [currentJobs, setCurrentJobs] = useState<JobMatchResult[]>([]);
   const [activeFilters, setActiveFilters] = useState<JobFilterCriteria>({});
   const [trackedApplications, setTrackedApplications] = useState<ApplicationRecord[]>([]);
+  const [storageStatus, setStorageStatus] = useState<{ backend: string; isPersistent: boolean } | null>(null);
+  const [isRefreshingApps, setIsRefreshingApps] = useState(false);
 
   // Modals
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -64,9 +67,33 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isSubmitting]);
 
-  // Load existing application records and profile on mount
+  // Dedicated server-driven refresh for applications
+  const refreshApplicationsFromServer = async () => {
+    setIsRefreshingApps(true);
+    try {
+      const res = await fetch("/api/applications");
+      const data = await res.json();
+      if (data.success && Array.isArray(data.applications)) {
+        setTrackedApplications(data.applications);
+        try {
+          localStorage.setItem("careerpilot_apps", JSON.stringify(data.applications));
+        } catch {
+          // ignore
+        }
+      }
+      if (data.storage) {
+        setStorageStatus(data.storage);
+      }
+    } catch (err) {
+      console.error("[CareerPilot] Error fetching applications:", err);
+    } finally {
+      setIsRefreshingApps(false);
+    }
+  };
+
+  // Load existing application records, profile, and chat messages on mount
   useEffect(() => {
-    // Check localStorage fallback for session continuity
+    // 1. Restore parsed profile
     try {
       const cachedProfile = localStorage.getItem("careerpilot_profile");
       if (cachedProfile) {
@@ -77,41 +104,76 @@ export default function Home() {
       // ignore
     }
 
-    fetch("/api/applications")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.applications) && data.applications.length > 0) {
-          setTrackedApplications(data.applications);
-        } else {
-          try {
-            const cachedApps = localStorage.getItem("careerpilot_apps");
-            if (cachedApps) {
-              const parsedApps = JSON.parse(cachedApps);
-              if (Array.isArray(parsedApps) && parsedApps.length > 0) {
-                setTrackedApplications(parsedApps);
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  // Sync state to localStorage for demo persistence
-  useEffect(() => {
+    // 2. Restore active conversation history
     try {
-      if (trackedApplications.length > 0) {
-        localStorage.setItem("careerpilot_apps", JSON.stringify(trackedApplications));
-      }
-      if (activeProfile) {
-        localStorage.setItem("careerpilot_profile", JSON.stringify(activeProfile));
+      const cachedChat = localStorage.getItem("careerpilot_chat_messages");
+      if (cachedChat) {
+        const parsedChat = JSON.parse(cachedChat);
+        if (Array.isArray(parsedChat) && parsedChat.length > 0) {
+          setMessages(parsedChat);
+        }
       }
     } catch {
       // ignore
     }
-  }, [trackedApplications, activeProfile]);
+
+    // 3. Fetch authoritative applications directly from server
+    refreshApplicationsFromServer();
+  }, []);
+
+  // Sync profile and chat messages to localStorage for session continuity across refresh
+  useEffect(() => {
+    try {
+      if (activeProfile) {
+        localStorage.setItem("careerpilot_profile", JSON.stringify(activeProfile));
+      }
+      if (messages.length > 1) {
+        localStorage.setItem("careerpilot_chat_messages", JSON.stringify(messages));
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeProfile, messages]);
+
+  const handleResetSession = () => {
+    try {
+      localStorage.removeItem("careerpilot_chat_messages");
+    } catch {
+      // ignore
+    }
+    setMessages([
+      {
+        id: "welcome",
+        sender: "assistant",
+        text: "Hello! I am **CareerPilot AI**, your autonomous job-matching and career agent. Upload your PDF or DOCX resume to get personalized recommendations, or ask me to search real software engineering jobs.",
+        time: "Just now",
+        isWelcome: true,
+      },
+    ]);
+    setCurrentJobs([]);
+    setActiveFilters({});
+  };
+
+  const handleOpenDrawer = async () => {
+    setIsDrawerOpen(true);
+    await refreshApplicationsFromServer();
+  };
+
+  const handleStatusChange = async (id: string, newStatus: ApplicationStatus) => {
+    try {
+      const res = await fetch("/api/applications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: newStatus }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await refreshApplicationsFromServer();
+      }
+    } catch (err) {
+      console.error("[CareerPilot] Error updating application status:", err);
+    }
+  };
 
   const suggestedPrompts = [
     { label: "📄 Upload Resume", action: () => setIsUploadOpen(true) },
@@ -276,6 +338,25 @@ export default function Home() {
             </span>
           </div>
 
+          {/* Database / Storage Status */}
+          {storageStatus && (
+            <div className="hidden xl:flex items-center gap-1.5 rounded-lg bg-slate-900/80 px-2.5 py-1.5 border border-slate-800 text-xs text-slate-400">
+              <span className={`h-2 w-2 rounded-full ${storageStatus.isPersistent ? "bg-emerald-400" : "bg-amber-400"}`} />
+              <span>Storage: <strong className="text-slate-200">{storageStatus.backend === "postgres" ? "PostgreSQL" : "Local"}</strong></span>
+            </div>
+          )}
+
+          {/* Reset Chat Session */}
+          <button
+            type="button"
+            onClick={handleResetSession}
+            title="Reset active chat conversation"
+            className="flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors"
+          >
+            <RotateCcw className="h-3.5 w-3.5 text-slate-400" />
+            <span className="hidden md:inline">Reset Chat</span>
+          </button>
+
           {/* Upload Button in Header */}
           <button
             type="button"
@@ -289,7 +370,7 @@ export default function Home() {
           {/* Tracked Applications Drawer Trigger */}
           <button
             type="button"
-            onClick={() => setIsDrawerOpen(true)}
+            onClick={handleOpenDrawer}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-indigo-600/30 transition-all hover:scale-[1.02]"
           >
             <Briefcase className="h-3.5 w-3.5" />
@@ -524,6 +605,9 @@ export default function Home() {
         onClose={() => setIsDrawerOpen(false)}
         applications={trackedApplications}
         onFindJobs={() => handleSend("Find jobs matching my resume.")}
+        onStatusChange={handleStatusChange}
+        onRefresh={refreshApplicationsFromServer}
+        isRefreshing={isRefreshingApps}
       />
     </div>
   );

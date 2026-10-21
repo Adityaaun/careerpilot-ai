@@ -59,7 +59,23 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
 
   const { intent, targetJobRef, filterCriteria } = parsedInput;
 
-  // 2. Handle Greeting Intent
+  // 2. Handle Contact Query Intent (Guardrail: Never invent phone numbers or personal contact info)
+  if (intent === "contact_query") {
+    return {
+      message: "I am **CareerPilot AI**, an autonomous digital agent, so I do not have a personal telephone number, mobile line, or physical phone. I am here to help you parse resumes, discover verified tech opportunities, and track applications. How can I assist your job search today?",
+      intent: "contact_query",
+      profile,
+      activeFilters,
+      provider: llmStatus.provider,
+      suggestedFollowUps: [
+        "🎯 Find matching jobs",
+        "🌐 Show remote software jobs",
+        "📋 View my applied jobs",
+      ],
+    };
+  }
+
+  // 3. Handle Greeting Intent
   if (intent === "greeting") {
     let message = "";
     if (profile) {
@@ -84,7 +100,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     };
   }
 
-  // 3. Handle Resume Status / Upload Guidance Intent
+  // 4. Handle Resume Status / Upload Guidance Intent
   if (intent === "resume_upload" || intent === "resume_status") {
     if (profile) {
       const skillsStr = profile.skills.length > 0 ? profile.skills.slice(0, 8).join(", ") : "Not specified";
@@ -110,7 +126,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     }
   }
 
-  // 4. Handle Job Search and Refine Search Intents
+  // 5. Handle Job Search and Refine Search Intents
   if (intent === "job_search" || intent === "refine_search") {
     // Merge previous filters with newly extracted criteria
     const mergedFilters: JobFilterCriteria = {
@@ -137,7 +153,15 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
 
     let message = "";
     if (matched.length === 0) {
-      message = "No jobs were found matching your current filter criteria. Try broadening your search or removing some skill/location constraints.";
+      if (mergedFilters.location) {
+        message = `No jobs were found matching your current filter criteria in **${mergedFilters.location}**. Most verified positions in our dataset are located in Europe, the UK, or offered as Remote roles.`;
+      } else if (mergedFilters.skills?.length) {
+        message = `No jobs were found matching your current filter criteria requiring **${mergedFilters.skills.join(" and ")}**. Try searching for related technologies or broader engineering roles.`;
+      } else if (mergedFilters.minScore) {
+        message = `No jobs were found matching your current filter criteria reaching the **${mergedFilters.minScore}%** compatibility threshold. Try searching without a minimum match constraint.`;
+      } else {
+        message = "No jobs were found matching your current filter criteria. Try broadening your search or removing some skill/location constraints.";
+      }
     } else {
       const remoteNote = mergedFilters.remoteOnly ? "remote " : "";
       const skillNote = mergedFilters.skills?.length ? `requiring ${mergedFilters.skills.join(", ")} ` : "";
@@ -301,9 +325,9 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     };
   }
 
-  // 6. Handle Track Applications Intent
+  // 7. Handle Track Applications Intent
   if (intent === "track_applications") {
-    const apps = listApplications(customStoragePath, customJobsDataset);
+    const apps = await listApplications(customStoragePath, customJobsDataset);
 
     if (apps.length === 0) {
       return {
