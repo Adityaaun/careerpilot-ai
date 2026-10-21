@@ -27,8 +27,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} dark h-full`}>
-      <body className="min-h-full flex flex-col antialiased bg-[#0b0f19] text-slate-100 selection:bg-indigo-500/30 selection:text-indigo-200">
+    <html lang="en" className={`${inter.variable} dark h-full`} suppressHydrationWarning>
+      <body
+        className="min-h-full flex flex-col antialiased bg-[#0b0f19] text-slate-100 selection:bg-indigo-500/30 selection:text-indigo-200"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>
