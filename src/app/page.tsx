@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Sparkles,
   Upload,
@@ -13,75 +13,182 @@ import {
   Layers,
   ChevronRight,
   ShieldCheck,
+  CheckCircle2,
 } from "lucide-react";
+import { ParsedProfile } from "@/lib/types/resume";
+import { JobMatchResult, JobFilterCriteria } from "@/lib/types/job";
+import { ApplicationRecord } from "@/lib/types/application";
+import { ProfileSummaryCard } from "@/components/ProfileSummaryCard";
+import { JobCard } from "@/components/JobCard";
+import { ResumeDropzoneModal } from "@/components/ResumeDropzoneModal";
+import { ApplicationsDrawer } from "@/components/ApplicationsDrawer";
 
-interface Message {
+interface ChatItem {
   id: string;
   sender: "assistant" | "user";
   text: string;
   time: string;
-  type?: "welcome" | "text" | "jobs" | "profile";
+  profile?: ParsedProfile;
+  jobs?: JobMatchResult[];
+  application?: ApplicationRecord;
+  applications?: ApplicationRecord[];
+  isWelcome?: boolean;
 }
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = useState<ChatItem[]>([
     {
       id: "welcome",
       sender: "assistant",
-      text: "Hello! I am **CareerPilot AI**, your autonomous career and job-matching assistant. Upload your PDF or DOCX resume to get started, or ask me to search real tech jobs.",
+      text: "Hello! I am **CareerPilot AI**, your autonomous job-matching and career agent. Upload your PDF or DOCX resume to get personalized recommendations, or ask me to search real software engineering jobs.",
       time: "Just now",
-      type: "welcome",
+      isWelcome: true,
     },
   ]);
+
   const [inputValue, setInputValue] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeProfile, setActiveProfile] = useState<ParsedProfile | null>(null);
+  const [currentJobs, setCurrentJobs] = useState<JobMatchResult[]>([]);
+  const [activeFilters, setActiveFilters] = useState<JobFilterCriteria>({});
+  const [trackedApplications, setTrackedApplications] = useState<ApplicationRecord[]>([]);
+
+  // Modals
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom of conversation
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isSubmitting]);
+
+  // Load existing application records on mount
+  useEffect(() => {
+    fetch("/api/applications")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.applications)) {
+          setTrackedApplications(data.applications);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const suggestedPrompts = [
-    { label: "📄 Upload Resume", prompt: "I'd like to upload my resume." },
-    { label: "🌐 Show remote software jobs", prompt: "Show only remote software engineer jobs." },
-    { label: "⚛️ React & Next.js roles", prompt: "Show jobs requiring React or Next.js." },
-    { label: "📋 View applied jobs", prompt: "Show my previously applied jobs." },
+    { label: "📄 Upload Resume", action: () => setIsUploadOpen(true) },
+    { label: "🎯 Match My Resume", prompt: "Find jobs matching my resume." },
+    { label: "🌐 Remote Jobs Only", prompt: "Show only remote software engineer jobs." },
+    { label: "⚛️ React & TypeScript", prompt: "Show jobs requiring React and TypeScript." },
+    { label: "📋 My Applied Jobs", prompt: "Show my previously applied jobs." },
   ];
 
-  const handleSend = (textToSend?: string) => {
+  const handleSend = async (textToSend?: string) => {
     const text = (textToSend || inputValue).trim();
     if (!text || isSubmitting) return;
 
-    const userMsg: Message = {
+    const userMsg: ChatItem = {
       id: `usr_${Date.now()}`,
       sender: "user",
       text,
-      time: "Just now",
-      type: "text",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
     setMessages((prev) => [...prev, userMsg]);
     setInputValue("");
     setIsSubmitting(true);
 
-    // Initial shell simulated response for Phase 1 preview
-    setTimeout(() => {
-      let reply = "";
-      if (text.toLowerCase().includes("upload") || text.toLowerCase().includes("resume")) {
-        reply = "You can upload your PDF or DOCX resume by clicking the **Attach Resume** button below or dropping a file into the chat.";
-      } else if (text.toLowerCase().includes("applied") || text.toLowerCase().includes("application")) {
-        reply = "You currently have 0 tracked applications. Once you apply to matched jobs, your records will be displayed here.";
-      } else {
-        reply = `I received your request: "${text}". Full agent tool orchestration (Resume Parsing, Explainable Job Matcher, and Application Tracker) will be connected in Phase 2 & 3.`;
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          profile: activeProfile || undefined,
+          currentJobs: currentJobs.length > 0 ? currentJobs : undefined,
+          activeFilters: Object.keys(activeFilters).length > 0 ? activeFilters : undefined,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to communicate with CareerPilot agent.");
       }
 
+      // Update state
+      if (data.profile) {
+        setActiveProfile(data.profile);
+      }
+      if (data.jobs) {
+        setCurrentJobs(data.jobs);
+      }
+      if (data.activeFilters) {
+        setActiveFilters(data.activeFilters);
+      }
+      if (data.application) {
+        // Refresh application tracking
+        setTrackedApplications((prev) => {
+          const exists = prev.some((a) => a.id === data.application.id || a.jobId === data.application.jobId);
+          return exists ? prev : [data.application, ...prev];
+        });
+      }
+      if (data.applications) {
+        setTrackedApplications(data.applications);
+      }
+
+      const botMsg: ChatItem = {
+        id: `bot_${Date.now()}`,
+        sender: "assistant",
+        text: data.message || "Operation completed.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        profile: data.profile && data.intent === "resume_status" ? data.profile : undefined,
+        jobs: data.jobs && data.jobs.length > 0 ? data.jobs : undefined,
+        application: data.application,
+        applications: data.applications,
+      };
+
+      setMessages((prev) => [...prev, botMsg]);
+    } catch (err) {
       setMessages((prev) => [
         ...prev,
         {
-          id: `bot_${Date.now()}`,
+          id: `err_${Date.now()}`,
           sender: "assistant",
-          text: reply,
-          time: "Just now",
-          type: "text",
+          text: `⚠️ **Agent Error**: ${(err as Error).message}`,
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
+    } finally {
       setIsSubmitting(false);
-    }, 600);
+    }
+  };
+
+  const handleResumeParsed = (profile: ParsedProfile, filename: string) => {
+    setActiveProfile(profile);
+
+    // Add user upload notice & assistant profile card to chat stream
+    const userNotice: ChatItem = {
+      id: `usr_upload_${Date.now()}`,
+      sender: "user",
+      text: `Uploaded resume: ${filename}`,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    const assistantNotice: ChatItem = {
+      id: `bot_upload_${Date.now()}`,
+      sender: "assistant",
+      text: `Successfully parsed **${profile.name}'s** resume! I extracted **${profile.skills.length} skills**, **${profile.yearsOfExperience} year(s) of experience**, and past history. Review your profile below or ask me to match jobs:`,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      profile,
+    };
+
+    setMessages((prev) => [...prev, userNotice, assistantNotice]);
+  };
+
+  const handleApplyToJob = async (jobId: string) => {
+    await handleSend(`Apply to job ${jobId}`);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -94,47 +201,66 @@ export default function Home() {
   return (
     <div className="flex h-screen w-full flex-col bg-[#0b0f19] text-slate-100 overflow-hidden font-sans">
       {/* Header */}
-      <header className="flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-[#0f172a]/70 px-6 backdrop-blur-md z-10">
+      <header className="flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-[#0f172a]/80 px-6 backdrop-blur-md z-10 shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 shadow-lg shadow-indigo-500/20">
             <Sparkles className="h-5 w-5 text-white" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-semibold tracking-tight text-white">
-                CareerPilot AI
-              </h1>
+              <h1 className="text-base font-semibold tracking-tight text-white">CareerPilot AI</h1>
               <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-400 border border-indigo-500/20">
-                SDE Intern Assessment
+                Hidani Tech Assessment
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Autonomous Job Matching & Resume Intelligence
-            </p>
+            <p className="text-xs text-slate-400">Autonomous Job Matching & Resume Intelligence</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Active Profile Pill */}
+          {activeProfile && (
+            <div className="hidden md:flex items-center gap-2 rounded-lg bg-indigo-950/60 border border-indigo-800/50 px-3 py-1.5 text-xs text-indigo-200">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span>
+                <strong>{activeProfile.name}</strong> ({activeProfile.designation})
+              </span>
+            </div>
+          )}
+
+          {/* Dataset Status */}
           <div className="hidden sm:flex items-center gap-2 rounded-lg bg-slate-900/80 px-3 py-1.5 border border-slate-800 text-xs text-slate-300">
             <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Dataset: <strong>50 verified</strong> / 1,600+ target</span>
+            <span>
+              Dataset: <strong>1,600 verified</strong> jobs
+            </span>
           </div>
 
+          {/* Upload Button in Header */}
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
-            onClick={() => handleSend("Show my previously applied jobs.")}
+            onClick={() => setIsUploadOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors"
           >
-            <Briefcase className="h-3.5 w-3.5 text-indigo-400" />
-            <span>My Applications</span>
+            <Upload className="h-3.5 w-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Upload Resume</span>
+          </button>
+
+          {/* Tracked Applications Drawer Trigger */}
+          <button
+            type="button"
+            onClick={() => setIsDrawerOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-indigo-600/30 transition-all hover:scale-[1.02]"
+          >
+            <Briefcase className="h-3.5 w-3.5" />
+            <span>Applications ({trackedApplications.length})</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Chat Thread */}
       <main className="flex flex-1 flex-col overflow-hidden max-w-5xl w-full mx-auto p-4 sm:p-6">
-        {/* Messages Stream */}
-        <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1 sm:pr-2">
           {messages.map((msg) => (
             <div
               key={msg.id}
@@ -145,82 +271,121 @@ export default function Home() {
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                   msg.sender === "user"
-                    ? "bg-indigo-600 text-white"
+                    ? "bg-indigo-600 text-white shadow-sm"
                     : "bg-slate-800 border border-slate-700 text-cyan-400"
                 }`}
               >
-                {msg.sender === "user" ? (
-                  <User className="h-4 w-4" />
-                ) : (
-                  <Bot className="h-4 w-4" />
-                )}
+                {msg.sender === "user" ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
               </div>
 
               <div
-                className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-4 text-sm leading-relaxed shadow-sm ${
+                className={`max-w-[92%] sm:max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed shadow-sm ${
                   msg.sender === "user"
                     ? "bg-indigo-600 text-white rounded-tr-none"
-                    : "bg-[#131b2e] border border-slate-800 text-slate-200 rounded-tl-none"
+                    : "bg-[#131b2e] border border-slate-800/90 text-slate-200 rounded-tl-none"
                 }`}
               >
-                <div className="prose prose-invert text-sm max-w-none">
+                {/* Formatted Text */}
+                <div className="text-sm leading-relaxed whitespace-pre-wrap">
                   {msg.text.split("\n").map((line, idx) => (
-                    <p key={idx} className="my-1">
+                    <p key={idx} className="my-0.5">
                       {line}
                     </p>
                   ))}
                 </div>
 
-                {msg.type === "welcome" && (
+                {/* Inline Profile Card */}
+                {msg.profile && (
+                  <ProfileSummaryCard
+                    profile={msg.profile}
+                    onSearchJobs={() => handleSend("Find jobs matching my resume.")}
+                  />
+                )}
+
+                {/* Inline Job Recommendations */}
+                {msg.jobs && msg.jobs.length > 0 && (
+                  <div className="mt-4 space-y-3">
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      Recommended Matches ({msg.jobs.length})
+                    </p>
+                    <div className="grid grid-cols-1 gap-3">
+                      {msg.jobs.map((jobResult, idx) => {
+                        const isAlreadyApplied = trackedApplications.some(
+                          (a) => a.jobId === jobResult.job.id
+                        );
+                        return (
+                          <JobCard
+                            key={jobResult.job.id}
+                            result={jobResult}
+                            index={idx}
+                            isApplied={isAlreadyApplied}
+                            onApply={handleApplyToJob}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Welcome Helper Grid */}
+                {msg.isWelcome && (
                   <div className="mt-4 pt-3 border-t border-slate-800/80">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                      <div className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 p-3 border border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => setIsUploadOpen(true)}
+                        className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 hover:bg-slate-800/80 p-3 border border-slate-800/80 text-left transition-all"
+                      >
                         <FileText className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-semibold text-slate-100">
-                            Resume Parser Tool
-                          </p>
+                          <p className="text-xs font-semibold text-slate-100">1. Resume Parser</p>
                           <p className="text-[11px] text-slate-400">
-                            Extracts contact, skills, experience, education & projects from PDF/DOCX.
+                            Drop PDF/DOCX to extract skills, experience & contact details.
                           </p>
                         </div>
-                      </div>
+                      </button>
 
-                      <div className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 p-3 border border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => handleSend("Find jobs matching my resume.")}
+                        className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 hover:bg-slate-800/80 p-3 border border-slate-800/80 text-left transition-all"
+                      >
                         <Search className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-semibold text-slate-100">
-                            Explainable Job Matcher
-                          </p>
+                          <p className="text-xs font-semibold text-slate-100">2. Real Job Matcher</p>
                           <p className="text-[11px] text-slate-400">
-                            Ranks real jobs with transparent match breakdown and live source links.
+                            Rank 1,600 real tech jobs with transparent 50/30/20 match scoring.
                           </p>
                         </div>
-                      </div>
+                      </button>
 
-                      <div className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 p-3 border border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => handleSend("Show only remote jobs.")}
+                        className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 hover:bg-slate-800/80 p-3 border border-slate-800/80 text-left transition-all"
+                      >
                         <Layers className="h-4 w-4 text-purple-400 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-semibold text-slate-100">
-                            Conversational Refinement
-                          </p>
+                          <p className="text-xs font-semibold text-slate-100">3. Conversational Refinement</p>
                           <p className="text-[11px] text-slate-400">
-                            Filter by remote, tech stack, or experience level seamlessly.
+                            Say &quot;show remote only&quot; or &quot;require React & TypeScript&quot;.
                           </p>
                         </div>
-                      </div>
+                      </button>
 
-                      <div className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 p-3 border border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => setIsDrawerOpen(true)}
+                        className="flex items-start gap-2.5 rounded-lg bg-slate-900/60 hover:bg-slate-800/80 p-3 border border-slate-800/80 text-left transition-all"
+                      >
                         <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-semibold text-slate-100">
-                            Application Tracker
-                          </p>
+                          <p className="text-xs font-semibold text-slate-100">4. Application Tracker</p>
                           <p className="text-[11px] text-slate-400">
-                            Saves application records, prevents duplicates & handles status.
+                            Track applications, prevent duplicates, and view status history.
                           </p>
                         </div>
-                      </div>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -236,6 +401,7 @@ export default function Home() {
             </div>
           ))}
 
+          {/* Thinking / Loading Indicator */}
           {isSubmitting && (
             <div className="flex items-center gap-3 animate-fade-in">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400">
@@ -243,42 +409,51 @@ export default function Home() {
               </div>
               <div className="rounded-2xl rounded-tl-none bg-[#131b2e] border border-slate-800 px-4 py-3 text-xs text-slate-400 flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" />
-                <span>CareerPilot is thinking...</span>
+                <span>CareerPilot is processing your request...</span>
               </div>
             </div>
           )}
+
+          <div ref={messagesEndRef} />
         </div>
 
-        {/* Suggested Prompt Chips */}
-        <div className="mt-4 flex flex-wrap gap-2 pt-2 border-t border-slate-800/50">
-          {suggestedPrompts.map((p, i) => (
+        {/* Quick Suggestion Chips */}
+        <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-slate-800/60 shrink-0">
+          {suggestedPrompts.map((item, i) => (
             <button
               key={i}
               type="button"
               className="flex items-center gap-1.5 rounded-full bg-slate-900/90 hover:bg-slate-800 px-3 py-1.5 text-xs text-slate-300 border border-slate-800 transition-all hover:border-indigo-500/40 hover:text-white"
-              onClick={() => handleSend(p.prompt)}
+              onClick={() => {
+                if (item.action) item.action();
+                else if (item.prompt) handleSend(item.prompt);
+              }}
             >
-              <span>{p.label}</span>
+              <span>{item.label}</span>
               <ChevronRight className="h-3 w-3 text-slate-400" />
             </button>
           ))}
         </div>
 
         {/* Input Bar */}
-        <div className="mt-3 relative flex items-center gap-2 rounded-2xl bg-[#0f172a] border border-slate-800 p-2 shadow-2xl focus-within:border-indigo-500/60 focus-within:ring-1 focus-within:ring-indigo-500/40 transition-all">
+        <div className="mt-3 relative flex items-center gap-2 rounded-2xl bg-[#0f172a] border border-slate-800 p-2 shadow-2xl focus-within:border-indigo-500/60 focus-within:ring-1 focus-within:ring-indigo-500/40 transition-all shrink-0">
           <button
             type="button"
             title="Upload Resume (PDF or DOCX)"
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-            onClick={() => handleSend("I want to upload my resume.")}
+            onClick={() => setIsUploadOpen(true)}
           >
-            <Upload className="h-4 w-4" />
+            <Upload className="h-4 w-4 text-indigo-400" />
           </button>
 
           <input
             type="text"
             className="flex-1 bg-transparent px-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none"
-            placeholder="Type your message or ask to filter jobs (e.g. 'show only remote jobs')..."
+            placeholder={
+              activeProfile
+                ? `Ask CareerPilot (e.g. "show remote jobs", "apply to job 1", "require TypeScript")...`
+                : `Upload your resume or ask to search jobs (e.g. "show remote React jobs")...`
+            }
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -295,6 +470,21 @@ export default function Home() {
           </button>
         </div>
       </main>
+
+      {/* Resume Upload Modal */}
+      <ResumeDropzoneModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onParsedSuccess={handleResumeParsed}
+      />
+
+      {/* Tracked Applications Drawer */}
+      <ApplicationsDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        applications={trackedApplications}
+        onFindJobs={() => handleSend("Find jobs matching my resume.")}
+      />
     </div>
   );
 }

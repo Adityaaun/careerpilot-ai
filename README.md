@@ -178,12 +178,14 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
   - Implemented `applicationStore.ts` with atomic writes, duplicate prevention, and quarantine of corrupted storage
   - Exposed REST API endpoints (`/api/resume/parse`, `/api/jobs/search`, `/api/applications`)
   - Added 28 automated tests across 5 test suites (all passing in <1s)
-- [ ] **Phase 3: Agent Orchestrator & Conversational Refinement**
-  - Intent classification & tool dispatching
-  - Natural language follow-up filtering (*"show remote only"*, *"requires React"*)
-  - Dual-mode LLM engine (Google Gemini 2.5 + Deterministic Fallback)
-  - Integration with conversational chat UI
-- [ ] **Phase 4: Full UI Polish, Testing & Deployment**
+- [x] **Phase 3: Agent Orchestrator, Tool Calling & Conversational Chat Integration** *(Completed)*
+  - Implemented `orchestrator.ts` with intent classification (`greeting`, `resume_upload`, `job_search`, `refine_search`, `apply_to_job`, `track_applications`, `help`)
+  - Implemented `intentParser.ts` resolving contextual ordinals (e.g. "apply to job 1", "second job") and natural language filter facets
+  - Implemented configurable LLM provider (`client.ts`) with Gemini SDK (`@google/genai`) and reliable deterministic fallback
+  - Built `/api/chat` App Router endpoint with Zod validation
+  - Built rich React chat components (`ProfileSummaryCard`, `JobCard`, `ResumeDropzoneModal`, `ApplicationsDrawer`)
+  - Extended Vitest suite to 43 passing tests across 7 test files (100% pass rate)
+- [ ] **Phase 4: Full UI Polish, Production Deployment & Video Walkthrough**
   - Interactive profile summary card, job recommendation cards, applications drawer
   - End-to-end integration tests & edge-case validation
   - Production deployment with live URL
