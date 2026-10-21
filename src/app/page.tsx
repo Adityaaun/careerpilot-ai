@@ -236,7 +236,10 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen w-full flex-col bg-[#0b0f19] text-slate-100 overflow-hidden font-sans">
+    <div
+      className="flex h-screen w-full flex-col bg-[#0b0f19] text-slate-100 overflow-hidden font-sans"
+      suppressHydrationWarning
+    >
       {/* Header */}
       <header className="flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-[#0f172a]/80 px-6 backdrop-blur-md z-10 shrink-0">
         <div className="flex items-center gap-3">
