@@ -14,6 +14,7 @@ import {
   pgGetApplications,
   pgInsertApplication,
   pgUpdateApplicationStatus,
+  pgDeleteApplication,
 } from "../db/postgres";
 
 // In-process write lock queue to serialize concurrent operations safely in local mode
@@ -394,4 +395,40 @@ export async function updateApplicationStatus(
 
   await writeQueue;
   return updatedRecord;
+}
+
+/**
+ * Deletes an application record by ID.
+ * Uses PostgreSQL if configured, else local storage.
+ */
+export async function deleteApplicationRecord(
+  id: string,
+  customStoragePath?: string,
+  userId = "demo_user"
+): Promise<boolean> {
+  if (isPostgresConfigured() && !customStoragePath) {
+    try {
+      return await pgDeleteApplication(id, userId);
+    } catch (err) {
+      const errMsg = (err as Error).message || String(err);
+      console.error("[ApplicationStore] Failed to delete application in PostgreSQL:", errMsg);
+      throw new Error(`PostgreSQL delete failed: ${errMsg}`);
+    }
+  }
+
+  let deleted = false;
+  writeQueue = writeQueue.then(async () => {
+    const existing = readApplications(customStoragePath);
+    const initialLen = existing.length;
+    const filtered = existing.filter(
+      (r) => !(r.id === id && (r.userId || "demo_user") === (userId || "demo_user"))
+    );
+    if (filtered.length < initialLen) {
+      await atomicWriteApplications(filtered, customStoragePath);
+      deleted = true;
+    }
+  });
+
+  await writeQueue;
+  return deleted;
 }

@@ -299,7 +299,7 @@ export async function pgDeleteApplication(id: string, userId = "demo_user"): Pro
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(
-    "DELETE FROM applications WHERE id = $1 AND (user_id = $2 OR user_id = 'demo_user')",
+    "DELETE FROM applications WHERE id = $1 AND user_id = $2",
     [id, userId]
   );
   return (result.rowCount ?? 0) > 0;

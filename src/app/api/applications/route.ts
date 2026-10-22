@@ -4,6 +4,7 @@ import {
   recordApplication,
   listApplications,
   updateApplicationStatus,
+  deleteApplicationRecord,
   checkStorageHealth,
 } from "@/lib/tools/applicationStore";
 import { ApplicationStatusSchema } from "@/lib/types/application";
@@ -185,6 +186,57 @@ export async function PATCH(req: NextRequest) {
         details: process.env.NODE_ENV === "development" ? message : undefined,
       },
       { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    let id = searchParams.get("id");
+    const userId = getUserIdFromRequest(req);
+
+    if (!id || id.trim().length === 0) {
+      const body = await req.json().catch(() => ({}));
+      if (body && typeof body.id === "string") {
+        id = body.id;
+      }
+    }
+
+    if (!id || id.trim().length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Application ID is required via query parameter (?id=...) or JSON body." },
+        { status: 400 }
+      );
+    }
+
+    const deleted = await deleteApplicationRecord(id.trim(), undefined, userId);
+    const storage = await checkStorageHealth();
+
+    if (!deleted) {
+      return NextResponse.json(
+        { success: false, error: `Application with ID "${id.trim()}" was not found for this user.`, storage },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Application "${id.trim()}" deleted successfully.`,
+      storage,
+    });
+  } catch (err) {
+    const message = (err as Error).message || "Failed to delete application.";
+    const isDbError = message.toLowerCase().includes("postgresql") || message.toLowerCase().includes("database");
+    const storage = await checkStorageHealth();
+    return NextResponse.json(
+      {
+        success: false,
+        error: message,
+        storage,
+        details: process.env.NODE_ENV === "development" ? message : undefined,
+      },
+      { status: isDbError ? 503 : 500 }
     );
   }
 }

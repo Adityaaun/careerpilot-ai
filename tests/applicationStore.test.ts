@@ -5,6 +5,7 @@ import {
   readApplications,
   recordApplication,
   listApplications,
+  deleteApplicationRecord,
 } from "../src/lib/tools/applicationStore";
 import { JobListing } from "../src/lib/types/job";
 
@@ -163,5 +164,54 @@ describe("Application Store Tool", () => {
 
     const saved = readApplications(testStoragePath);
     expect(saved.length).toBe(2);
+  });
+
+  describe("deleteApplicationRecord", () => {
+    it("deletes an existing application by ID", async () => {
+      const record = await recordApplication({ jobId: "job_test_1" }, testStoragePath, mockTestJobs);
+      expect(record.success).toBe(true);
+
+      const deleted = await deleteApplicationRecord(record.record!.id, testStoragePath, "demo_user");
+      expect(deleted).toBe(true);
+
+      const saved = readApplications(testStoragePath);
+      expect(saved.length).toBe(0);
+    });
+
+    it("returns false when attempting to delete a nonexistent ID", async () => {
+      const deleted = await deleteApplicationRecord("nonexistent_id", testStoragePath, "demo_user");
+      expect(deleted).toBe(false);
+    });
+
+    it("prevents user B from deleting user A's application", async () => {
+      const recordA = await recordApplication(
+        { jobId: "job_test_1", userId: "user_a" },
+        testStoragePath,
+        mockTestJobs
+      );
+      expect(recordA.success).toBe(true);
+
+      // User B tries to delete User A's record
+      const deletedByB = await deleteApplicationRecord(recordA.record!.id, testStoragePath, "user_b");
+      expect(deletedByB).toBe(false);
+
+      // User A's record must remain intact
+      const saved = readApplications(testStoragePath);
+      expect(saved.length).toBe(1);
+      expect(saved[0].id).toBe(recordA.record!.id);
+    });
+
+    it("allows re-tracking a job after it was deleted", async () => {
+      const first = await recordApplication({ jobId: "job_test_1" }, testStoragePath, mockTestJobs);
+      expect(first.success).toBe(true);
+
+      const deleted = await deleteApplicationRecord(first.record!.id, testStoragePath, "demo_user");
+      expect(deleted).toBe(true);
+
+      // Re-applying to the same job should now succeed
+      const second = await recordApplication({ jobId: "job_test_1" }, testStoragePath, mockTestJobs);
+      expect(second.success).toBe(true);
+      expect(second.alreadyApplied).toBe(false);
+    });
   });
 });
