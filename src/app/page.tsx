@@ -117,7 +117,20 @@ export default function Home() {
       // ignore
     }
 
-    // 3. Fetch authoritative applications directly from server
+    // 3. Restore cached applications immediately so UI does not flash empty state
+    try {
+      const cachedApps = localStorage.getItem("careerpilot_apps");
+      if (cachedApps) {
+        const parsedApps = JSON.parse(cachedApps);
+        if (Array.isArray(parsedApps) && parsedApps.length > 0) {
+          setTrackedApplications(parsedApps);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 4. Fetch authoritative applications directly from server
     refreshApplicationsFromServer();
   }, []);
 
@@ -230,11 +243,24 @@ export default function Home() {
         // Refresh application tracking
         setTrackedApplications((prev) => {
           const exists = prev.some((a) => a.id === data.application.id || a.jobId === data.application.jobId);
-          return exists ? prev : [data.application, ...prev];
+          const updated = exists ? prev : [data.application, ...prev];
+          try {
+            localStorage.setItem("careerpilot_apps", JSON.stringify(updated));
+          } catch {
+            // ignore
+          }
+          return updated;
         });
+        // Immediately fetch authoritative server list to guarantee sync
+        refreshApplicationsFromServer();
       }
       if (data.applications) {
         setTrackedApplications(data.applications);
+        try {
+          localStorage.setItem("careerpilot_apps", JSON.stringify(data.applications));
+        } catch {
+          // ignore
+        }
       }
 
       const botMsg: ChatItem = {

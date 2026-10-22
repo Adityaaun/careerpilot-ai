@@ -121,6 +121,12 @@ export async function ensurePostgresSchema(): Promise<void> {
         ) THEN
           ALTER TABLE applications ADD CONSTRAINT unique_user_job_application UNIQUE (user_id, job_id);
         END IF;
+
+        -- Normalize any rows created with ad-hoc emails to 'demo_user' for the single-user assessment demo
+        UPDATE applications 
+        SET user_id = 'demo_user' 
+        WHERE user_id != 'demo_user' 
+          AND job_id NOT IN (SELECT job_id FROM applications WHERE user_id = 'demo_user');
       END $$;
     `);
 
@@ -165,7 +171,7 @@ export async function pgGetApplications(userId = "demo_user"): Promise<Applicati
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(
-    "SELECT * FROM applications WHERE user_id = $1 ORDER BY created_at DESC",
+    "SELECT * FROM applications WHERE user_id = $1 OR user_id = 'demo_user' ORDER BY created_at DESC",
     [userId]
   );
   return result.rows.map(mapRowToRecord);
@@ -183,7 +189,7 @@ export async function pgGetApplicationByJobId(
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(
-    "SELECT * FROM applications WHERE user_id = $1 AND job_id = $2 LIMIT 1",
+    "SELECT * FROM applications WHERE (user_id = $1 OR user_id = 'demo_user') AND job_id = $2 LIMIT 1",
     [userId, jobId]
   );
   if (result.rows.length === 0) return null;
@@ -276,7 +282,7 @@ export async function pgUpdateApplicationStatus(
   const query = `
     UPDATE applications
     SET status = $1, notes = COALESCE($2, notes), updated_at = NOW()
-    WHERE id = $3 AND user_id = $4
+    WHERE id = $3 AND (user_id = $4 OR user_id = 'demo_user')
     RETURNING *
   `;
   const result = await p.query(query, [status, notes || null, id, userId]);
@@ -293,7 +299,7 @@ export async function pgDeleteApplication(id: string, userId = "demo_user"): Pro
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(
-    "DELETE FROM applications WHERE id = $1 AND user_id = $2",
+    "DELETE FROM applications WHERE id = $1 AND (user_id = $2 OR user_id = 'demo_user')",
     [id, userId]
   );
   return (result.rowCount ?? 0) > 0;

@@ -62,7 +62,7 @@ export async function processAgentMessage(input: OrchestratorInput): Promise<Orc
     activeFilters = {},
     customJobsDataset,
     customStoragePath,
-    userId = profile?.contact?.email || "demo_user",
+    userId = input.userId || "demo_user",
   } = input;
   const llmStatus = getLLMStatus();
 
