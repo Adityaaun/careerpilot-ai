@@ -9,6 +9,7 @@ export type UserIntent =
   | "apply_to_job"
   | "track_applications"
   | "contact_query"
+  | "candidate_contact_query"
   | "help"
   | "unknown";
 
@@ -88,9 +89,29 @@ export function parseUserMessage(
 
   const filterCriteria: JobFilterCriteria = {};
 
-  // 1. Check Contact / Phone Number Query (Guardrail: Never invent phone numbers)
+  // Whitespace or empty message fallback to unknown
+  if (!text || text.length === 0) {
+    return {
+      intent: "unknown",
+      filterCriteria,
+      confidence: 0.1,
+    };
+  }
+
+  // 1. Candidate Contact Query: "What is my phone number?", "my phone", "my email"
   if (
-    /\b(phone|phone number|telephone|mobile number|call you|reach you by phone|your number)\b/i.test(lower)
+    /\b(what is my phone|what's my phone|my phone|my phone number|my telephone|my mobile|my contact)\b/i.test(lower)
+  ) {
+    return {
+      intent: "candidate_contact_query",
+      filterCriteria,
+      confidence: 0.95,
+    };
+  }
+
+  // 2. Assistant Contact Query: "Give me your phone number", "what is your phone"
+  if (
+    /\b(your phone|phone number|telephone|mobile number|call you|reach you by phone|your number|give me your phone)\b/i.test(lower)
   ) {
     return {
       intent: "contact_query",
@@ -99,7 +120,7 @@ export function parseUserMessage(
     };
   }
 
-  // 2. Check Apply to Job intent
+  // 3. Check Apply to Job intent
   const applyMatch = lower.match(/\b(apply|apply to|track|submit application for)\b/i);
   if (applyMatch) {
     // Look for direct job ID (e.g. arb_xxx or job_xxx)
@@ -141,63 +162,64 @@ export function parseUserMessage(
     };
   }
 
-  // 3. Check Track Applications intent
+  // 4. View Tracked Applications Intent
   if (
-    lower.includes("applied") ||
     lower.includes("my applications") ||
-    lower.includes("view applied") ||
-    lower.includes("track application") ||
-    lower.includes("application status") ||
-    lower.includes("previously applied")
+    lower.includes("applied jobs") ||
+    lower.includes("show applications") ||
+    lower.includes("tracked jobs") ||
+    lower.includes("show my applied") ||
+    lower.includes("my tracked") ||
+    lower === "applications"
   ) {
     return {
       intent: "track_applications",
-      filterCriteria,
-      confidence: 0.95,
-    };
-  }
-
-  // 4. Check Resume Upload / Status intent (when not asking for job searches or matching)
-  if (
-    !lower.includes("job") &&
-    !lower.includes("match") &&
-    (
-      lower.includes("upload resume") ||
-      lower.includes("upload my resume") ||
-      lower.includes("attach resume") ||
-      lower.includes("how to upload") ||
-      lower.includes("my resume") ||
-      lower.includes("my profile") ||
-      lower.includes("show my profile") ||
-      lower.includes("parsed resume")
-    )
-  ) {
-    return {
-      intent: hasActiveProfile ? "resume_status" : "resume_upload",
       filterCriteria,
       confidence: 0.9,
     };
   }
 
-  // 5. Check Greetings
+  // 5. Greeting Intent
   if (
-    /^(hi|hello|hey|good morning|good afternoon|good evening|greetings)\b/i.test(lower) &&
-    !lower.includes("job") &&
-    !lower.includes("remote")
+    /^(hi|hello|hey|greetings|good morning|good afternoon|good evening)\b/i.test(lower) &&
+    lower.split(/\s+/).length <= 4
   ) {
     return {
       intent: "greeting",
       filterCriteria,
-      confidence: 0.95,
+      confidence: 0.9,
     };
   }
 
-  // 6. Check Help
+  // 6. Resume Status / Upload Intent
+  if (
+    lower.includes("upload resume") ||
+    lower.includes("parse resume") ||
+    lower.includes("my resume") ||
+    lower.includes("resume status") ||
+    lower.includes("who am i") ||
+    lower.includes("what are my skills")
+  ) {
+    if (lower.includes("find jobs matching") || lower.includes("match my resume") || lower.includes("matching my resume") || lower.includes("matching my uploaded resume")) {
+      return {
+        intent: "job_search",
+        filterCriteria,
+        confidence: 0.95,
+      };
+    }
+
+    return {
+      intent: hasActiveProfile ? "resume_status" : "resume_upload",
+      filterCriteria,
+      confidence: 0.85,
+    };
+  }
+
+  // 7. Help Intent
   if (
     lower === "help" ||
-    lower === "?" ||
-    lower.includes("how does this work") ||
-    lower.includes("what can you do")
+    lower.includes("what can you do") ||
+    lower.includes("how does this work")
   ) {
     return {
       intent: "help",
@@ -206,7 +228,7 @@ export function parseUserMessage(
     };
   }
 
-  // 7. Entity Extraction for Job Searches and Refinements
+  // 8. Entity Extraction for Job Searches and Refinements
   // Remote filter
   if (
     lower.includes("remote") ||
@@ -217,14 +239,33 @@ export function parseUserMessage(
     filterCriteria.remoteOnly = true;
   }
 
-  // Experience level filter (e.g. internships, entry-level, senior)
+  // Experience level filter (e.g. internships, 0-2 years, entry-level, senior)
   if (lower.includes("intern") || lower.includes("student")) {
     filterCriteria.experienceLevel = "intern";
-    filterCriteria.query = "intern";
-  } else if (lower.includes("entry-level") || lower.includes("entry level") || lower.includes("junior")) {
-    filterCriteria.experienceLevel = "entry";
-  } else if (lower.includes("senior") || lower.includes("lead") || lower.includes("principal")) {
-    filterCriteria.experienceLevel = "senior";
+  } else if (
+    /\b(0[-–\s]*2|0\s*to\s*2)\s*(?:years?|yrs?)?\b/i.test(lower) ||
+    lower.includes("entry-level") ||
+    lower.includes("entry level") ||
+    lower.includes("junior")
+  ) {
+    filterCriteria.experienceLevel = "0-2 years (Entry / Junior)";
+  } else if (
+    /\b(1[-–\s]*3|1\s*to\s*3)\s*(?:years?|yrs?)?\b/i.test(lower) ||
+    lower.includes("associate")
+  ) {
+    filterCriteria.experienceLevel = "1-3 years (Associate / Mid)";
+  } else if (
+    /\b(3[-–\s]*5|3\s*to\s*5)\s*(?:years?|yrs?)?\b/i.test(lower) ||
+    lower.includes("mid-senior")
+  ) {
+    filterCriteria.experienceLevel = "3-5 years (Mid-Senior)";
+  } else if (
+    /\b(5\+|\b5\s*or\s*more)\s*(?:years?|yrs?)?\b/i.test(lower) ||
+    lower.includes("senior") ||
+    lower.includes("lead") ||
+    lower.includes("principal")
+  ) {
+    filterCriteria.experienceLevel = "5+ years (Senior / Lead)";
   }
 
   // Min match score filter (e.g. "at least 70% match", "70% match")
@@ -248,7 +289,9 @@ export function parseUserMessage(
   // Skills filter from "requiring X and Y" syntax
   const requiringMatch = text.match(/\brequiring\s+([A-Za-z0-9#+.]+(?:\s+(?:and|&|,)\s+[A-Za-z0-9#+.]+)*)/i);
   if (requiringMatch) {
-    const rawSkills = requiringMatch[1].split(/\s+(?:and|&|,)\s+/i).map((s) => s.trim());
+    const rawSkills = requiringMatch[1]
+      .split(/\s+(?:and|&|,)\s+/i)
+      .map((s) => s.replace(/[.,;!?]+$/, "").trim());
     for (const rs of rawSkills) {
       if (rs.length > 1 && !extractedSkills.some((s) => s.toLowerCase() === rs.toLowerCase())) {
         extractedSkills.push(rs);
@@ -279,7 +322,22 @@ export function parseUserMessage(
     }
   }
 
-  // 8. Check if Refine Search vs New Search
+  // Company filter (e.g. "from AcmeCorp", "from NonExistent", "company AcmeCorp")
+  const companyMatch = text.match(/\b(?:from|company)\s+([A-Za-z0-9&.\s]+?)(?:$|[.,;!?])/i);
+  if (companyMatch) {
+    const candidateComp = companyMatch[1].trim();
+    const compBlacklist = [
+      "the", "a", "an", "all", "our", "my", "your", "remote", "home",
+      "scratch", "india", "europe", "germany", "berlin", "london", "least"
+    ];
+    if (!compBlacklist.includes(candidateComp.toLowerCase()) && candidateComp.length >= 2) {
+      if (!filterCriteria.query) {
+        filterCriteria.query = candidateComp;
+      }
+    }
+  }
+
+  // 9. Check if Refine Search vs New Search
   const isRefineKeyword =
     lower.includes("only") ||
     lower.includes("also") ||
@@ -296,25 +354,23 @@ export function parseUserMessage(
     };
   }
 
-  // 9. General Job Search check
+  // 10. General Job Search check
   if (
     lower.includes("job") ||
-    lower.includes("match") ||
     lower.includes("role") ||
-    lower.includes("developer") ||
-    lower.includes("engineer") ||
-    lower.includes("position") ||
-    lower.includes("internship") ||
-    lower.includes("hiring") ||
+    lower.includes("find") ||
+    lower.includes("search") ||
+    lower.includes("show") ||
+    lower.includes("looking for") ||
+    extractedSkills.length > 0 ||
     filterCriteria.remoteOnly ||
-    filterCriteria.location !== undefined ||
-    filterCriteria.minScore !== undefined ||
-    (filterCriteria.skills && filterCriteria.skills.length > 0)
+    filterCriteria.location ||
+    filterCriteria.experienceLevel
   ) {
     return {
       intent: "job_search",
       filterCriteria,
-      confidence: 0.85,
+      confidence: 0.8,
     };
   }
 

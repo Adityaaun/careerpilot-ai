@@ -13,6 +13,7 @@ export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
 
 export const ApplicationRecordSchema = z.object({
   id: z.string(), // application unique record id (e.g. app_1234567890)
+  userId: z.string().optional().default("demo_user"),
   jobId: z.string().min(1, "Job ID is required"),
   jobTitle: z.string().min(1, "Job title is required"),
   company: z.string().min(1, "Company name is required"),

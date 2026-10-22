@@ -195,5 +195,99 @@ describe("Job Matcher Tool", () => {
       const results = matchJobs(mockSeniorProfile, { limit: 2 }, mockJobs);
       expect(results.length).toBe(2);
     });
+
+    it("prevents accidental substring collisions between unrelated skills", () => {
+      const goJob: JobListing = {
+        id: "job_django",
+        title: "Django Web Developer",
+        company: "Python Org",
+        location: "Remote",
+        experience_required: "1-3 years (Associate / Mid)",
+        skills: ["Django", "Python"],
+        description: "Develop web services using Django framework and Python.",
+        source_url: "https://example.com/django",
+        remote: true,
+        source: "arbeitnow",
+      };
+
+      const goProfile: ParsedProfile = {
+        name: "Gopher",
+        contact: { email: "", phone: "", location: "", linkedin: "", github: "", website: "" },
+        designation: "Golang Engineer",
+        yearsOfExperience: 3,
+        skills: ["Go"],
+        experience: [],
+        education: [],
+        projects: [],
+        summary: "",
+        rawTextLength: 50,
+      };
+
+      const match = scoreJobMatch(goProfile, goJob);
+      // 'Go' should NEVER match 'Django' via accidental substring match
+      expect(match.matchedSkills).not.toContain("Django");
+      expect(match.matchedSkills).not.toContain("Go");
+      expect(match.matchScore).toBeLessThan(50);
+    });
+
+    it("normalizes skill aliases correctly (k8s -> kubernetes, reactjs -> react, node -> node.js)", () => {
+      const aliasProfile: ParsedProfile = {
+        name: "Alias Tester",
+        contact: { email: "", phone: "", location: "", linkedin: "", github: "", website: "" },
+        designation: "Full Stack Engineer",
+        yearsOfExperience: 5,
+        skills: ["ReactJS", "Node", "Postgres", "K8s"],
+        experience: [],
+        education: [],
+        projects: [],
+        summary: "",
+        rawTextLength: 50,
+      };
+
+      const match = scoreJobMatch(aliasProfile, mockJobs[0]);
+      // mockJobs[0] has React, Node.js, PostgreSQL
+      expect(match.matchedSkills).toContain("React");
+      expect(match.matchedSkills).toContain("Node.js");
+      expect(match.matchedSkills).toContain("PostgreSQL");
+    });
+
+    it("strictly requires all specified skills when filtering", () => {
+      // Must contain both React and TypeScript
+      const results = matchJobs(
+        mockSeniorProfile,
+        { skills: ["React", "TypeScript"] },
+        mockJobs
+      );
+      expect(results.length).toBe(1);
+      expect(results[0].job.id).toBe("job_react_sr");
+
+      // Requiring React and a skill no mock job has (e.g. Cobol) returns 0
+      const noResults = matchJobs(
+        mockSeniorProfile,
+        { skills: ["React", "Cobol"] },
+        mockJobs
+      );
+      expect(noResults.length).toBe(0);
+    });
+
+    it("penalizes seniority mismatch when junior applies to 5+ years senior role", () => {
+      const juniorProfile: ParsedProfile = {
+        name: "Junior Dev",
+        contact: { email: "", phone: "", location: "", linkedin: "", github: "", website: "" },
+        designation: "Junior Engineer",
+        yearsOfExperience: 0,
+        skills: ["React", "TypeScript"],
+        experience: [],
+        education: [],
+        projects: [],
+        summary: "",
+        rawTextLength: 50,
+      };
+
+      const match = scoreJobMatch(juniorProfile, mockJobs[0]); // 5+ years senior role
+      expect(match.matchReason).toContain("Note: Requires 5+ years (Senior / Lead)");
+      expect(match.matchScore).toBeLessThan(75);
+    });
   });
 });
+

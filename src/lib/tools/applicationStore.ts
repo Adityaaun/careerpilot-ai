@@ -10,6 +10,7 @@ import { JobListing } from "../types/job";
 import { getJobDataset } from "./jobMatcher";
 import {
   isPostgresConfigured,
+  testPostgresConnection,
   pgGetApplications,
   pgInsertApplication,
   pgUpdateApplicationStatus,
@@ -24,25 +25,59 @@ const memoryFallbackStore: ApplicationRecord[] = [];
 export interface StorageStatus {
   backend: "postgres" | "local_fallback";
   isPersistent: boolean;
+  connected?: boolean;
   message: string;
 }
 
 /**
- * Returns current active storage backend status
+ * Returns instantaneous storage configuration state.
  */
 export function getStorageStatus(): StorageStatus {
   if (isPostgresConfigured()) {
     return {
       backend: "postgres",
       isPersistent: true,
-      message: "Connected to persistent PostgreSQL database.",
+      message: "PostgreSQL configured via DATABASE_URL.",
     };
   }
   return {
     backend: "local_fallback",
     isPersistent: false,
+    connected: false,
     message:
-      "Running on local filesystem fallback. DATABASE_URL is not set. Data will not persist across serverless restarts.",
+      "Demo mode: Local filesystem fallback. DATABASE_URL is not set. Data will not persist across serverless restarts on Vercel.",
+  };
+}
+
+/**
+ * Actively checks database reachability and returns authoritative storage health.
+ */
+export async function checkStorageHealth(): Promise<StorageStatus> {
+  if (!isPostgresConfigured()) {
+    return {
+      backend: "local_fallback",
+      isPersistent: false,
+      connected: false,
+      message:
+        "Demo mode: Local filesystem fallback. DATABASE_URL is not configured. Records are stored locally and will reset on serverless container restart.",
+    };
+  }
+
+  const check = await testPostgresConnection();
+  if (check.ok) {
+    return {
+      backend: "postgres",
+      isPersistent: true,
+      connected: true,
+      message: "Connected to persistent PostgreSQL database.",
+    };
+  }
+
+  return {
+    backend: "postgres",
+    isPersistent: false,
+    connected: false,
+    message: `PostgreSQL connection failed: ${check.error || "Unknown error"}. Check server logs and DATABASE_URL.`,
   };
 }
 
@@ -148,18 +183,20 @@ async function atomicWriteApplications(
 
 /**
  * Records a new application for a job with duplicate prevention and validation.
- * Uses PostgreSQL if configured, otherwise falls back to local file.
+ * Uses PostgreSQL if configured. If PostgreSQL is configured but fails, returns a clear error
+ * rather than silently switching to local storage.
  */
 export async function recordApplication(
   params: {
     jobId: string;
     notes?: string;
     candidateName?: string;
+    userId?: string;
   },
   customStoragePath?: string,
   customJobs?: JobListing[]
 ): Promise<ApplicationSubmissionResult> {
-  const { jobId, notes, candidateName } = params;
+  const { jobId, notes, candidateName, userId = "demo_user" } = params;
 
   if (!jobId || typeof jobId !== "string" || jobId.trim().length === 0) {
     return {
@@ -184,6 +221,7 @@ export async function recordApplication(
   const nowIso = new Date().toISOString();
   const newRecord: ApplicationRecord = {
     id: `app_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    userId,
     jobId: job.id,
     jobTitle: job.title,
     company: job.company,
@@ -208,7 +246,7 @@ export async function recordApplication(
   // 2. Persist in PostgreSQL if configured (and not explicitly overridden by customStoragePath in tests)
   if (isPostgresConfigured() && !customStoragePath) {
     try {
-      const dbResult = await pgInsertApplication(validation.data);
+      const dbResult = await pgInsertApplication(validation.data, userId);
       if (dbResult.duplicate) {
         const existing = dbResult.existingRecord || validation.data;
         return {
@@ -224,7 +262,7 @@ export async function recordApplication(
         return {
           success: false,
           error: dbResult.error || "Database error saving application.",
-          externalNotice: "Database operation failed.",
+          externalNotice: "Database operation failed. Application could not be persisted.",
         };
       }
 
@@ -235,18 +273,27 @@ export async function recordApplication(
         externalNotice: `Application tracked in CareerPilot AI. NOTE: This application is recorded in your persistent tracker. To submit your credentials directly to ${job.company}, visit their official listing at: ${job.source_url}`,
       };
     } catch (dbErr) {
-      console.error("[ApplicationStore] Database error during insert, falling back to local file:", dbErr);
+      const errMsg = (dbErr as Error).message || String(dbErr);
+      console.error("[ApplicationStore] Critical Database failure during insert:", errMsg);
+      // DO NOT silently fall back to local file storage when DATABASE_URL is configured
+      return {
+        success: false,
+        error: `Database unavailable: Failed to persist application to PostgreSQL (${errMsg}). Check database connection.`,
+        externalNotice: "Database persistence failed. Your application could not be saved to the database.",
+      };
     }
   }
 
-  // 3. Local File Fallback (or test customStoragePath)
+  // 3. Local File Fallback (only used when DATABASE_URL is NOT set, or explicitly testing customStoragePath)
   let outputResult!: ApplicationSubmissionResult;
 
   writeQueue = writeQueue.then(async () => {
     const existingRecords = readApplications(customStoragePath);
 
-    // Duplicate Prevention Check
-    const alreadyAppliedRecord = existingRecords.find((r) => r.jobId === job.id);
+    // Duplicate Prevention Check within local scope
+    const alreadyAppliedRecord = existingRecords.find(
+      (r) => r.jobId === job.id && (r.userId || "demo_user") === userId
+    );
     if (alreadyAppliedRecord) {
       outputResult = {
         success: false,
@@ -258,7 +305,7 @@ export async function recordApplication(
       return;
     }
 
-    // Persist
+    // Persist to local file
     existingRecords.push(validation.data);
     await atomicWriteApplications(existingRecords, customStoragePath);
 
@@ -266,7 +313,7 @@ export async function recordApplication(
       success: true,
       alreadyApplied: false,
       record: validation.data,
-      externalNotice: `Application tracked in CareerPilot AI. NOTE: This application is recorded in your local assistant tracker. To submit your credentials directly to ${job.company}, visit their official listing at: ${job.source_url}`,
+      externalNotice: `Application tracked in CareerPilot AI. NOTE: This application is recorded in your local assistant tracker (Demo Mode). To submit your credentials directly to ${job.company}, visit their official listing at: ${job.source_url}`,
     };
   });
 
@@ -276,23 +323,29 @@ export async function recordApplication(
 
 /**
  * Lists all recorded applications joined with corresponding job listings.
- * Uses PostgreSQL if configured, otherwise falls back to local file.
+ * Uses PostgreSQL if configured. If PostgreSQL is configured but fails, throws error
+ * rather than silently switching to local file.
  */
 export async function listApplications(
   customStoragePath?: string,
-  customJobs?: JobListing[]
+  customJobs?: JobListing[],
+  userId = "demo_user"
 ): Promise<Array<ApplicationRecord & { jobListing?: JobListing }>> {
   let records: ApplicationRecord[] = [];
 
   if (isPostgresConfigured() && !customStoragePath) {
     try {
-      records = await pgGetApplications();
+      records = await pgGetApplications(userId);
     } catch (err) {
-      console.error("[ApplicationStore] Failed to fetch applications from PostgreSQL:", err);
-      records = readApplications(customStoragePath);
+      const errMsg = (err as Error).message || String(err);
+      console.error("[ApplicationStore] Failed to fetch applications from PostgreSQL:", errMsg);
+      // Throw explicitly so the API route returns 500 rather than silently serving empty/stale local file
+      throw new Error(`PostgreSQL query failed: ${errMsg}`);
     }
   } else {
-    records = readApplications(customStoragePath);
+    records = readApplications(customStoragePath).filter(
+      (r) => (r.userId || "demo_user") === userId
+    );
   }
 
   const jobs = customJobs || getJobDataset();
@@ -305,26 +358,30 @@ export async function listApplications(
 }
 
 /**
- * Updates an application status (e.g. "tracked" -> "submitted")
+ * Updates an application status (e.g. "tracked" -> "submitted").
+ * Uses PostgreSQL if configured. If PostgreSQL is configured but fails, throws error.
  */
 export async function updateApplicationStatus(
   id: string,
   status: ApplicationStatus,
   notes?: string,
-  customStoragePath?: string
+  customStoragePath?: string,
+  userId = "demo_user"
 ): Promise<ApplicationRecord | null> {
   if (isPostgresConfigured() && !customStoragePath) {
     try {
-      return await pgUpdateApplicationStatus(id, status, notes);
+      return await pgUpdateApplicationStatus(id, status, notes, userId);
     } catch (err) {
-      console.error("[ApplicationStore] Failed to update application in PostgreSQL:", err);
+      const errMsg = (err as Error).message || String(err);
+      console.error("[ApplicationStore] Failed to update application in PostgreSQL:", errMsg);
+      throw new Error(`PostgreSQL update failed: ${errMsg}`);
     }
   }
 
   let updatedRecord: ApplicationRecord | null = null;
   writeQueue = writeQueue.then(async () => {
     const existing = readApplications(customStoragePath);
-    const idx = existing.findIndex((r) => r.id === id);
+    const idx = existing.findIndex((r) => r.id === id && (r.userId || "demo_user") === userId);
     if (idx === -1) return;
 
     existing[idx].status = status;

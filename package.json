@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run tests/postgresIntegration.test.ts",
     "data:collect": "tsx scripts/collect_jobs.ts",
     "data:validate": "tsx scripts/validate_jobs.ts",
     "db:init": "tsx scripts/init_db.ts",

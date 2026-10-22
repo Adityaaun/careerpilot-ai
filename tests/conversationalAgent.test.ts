@@ -252,7 +252,76 @@ describe("Conversational Agent Phase 5 Accuracy & Guardrail Audit", () => {
       customJobsDataset: mockJobsDataset,
     });
 
-    expect(res.intent).toBe("help");
+    expect(res.intent).toBe("unknown");
     expect(res.message).toContain("Here are some things you can ask me to do");
   });
+
+  // Test 15: What is my phone number? (Candidate contact check from parsed resume)
+  it("Request 15: 'What is my phone number?' reports candidate's authentic resume phone accurately", async () => {
+    const res = await runOrchestrator({
+      userMessage: "What is my phone number?",
+      profile: mockCandidateProfile, // has phone: "555-0199"
+      customJobsDataset: mockJobsDataset,
+    });
+
+    expect(res.intent).toBe("candidate_contact_query");
+    expect(res.message).toContain("555-0199");
+  });
+
+  // Test 16: What is my phone number? (Candidate has NO phone in resume - must NOT invent)
+  it("Request 16: 'What is my phone number?' when resume lacks phone does NOT invent one", async () => {
+    const noPhoneProfile: ParsedProfile = {
+      ...mockCandidateProfile,
+      contact: { ...mockCandidateProfile.contact, phone: "" },
+    };
+
+    const res = await runOrchestrator({
+      userMessage: "What is my phone number?",
+      profile: noPhoneProfile,
+      customJobsDataset: mockJobsDataset,
+    });
+
+    expect(res.intent).toBe("candidate_contact_query");
+    expect(res.message).toContain("does not list a phone number");
+    expect(res.message).not.toMatch(/\b\d{3}[-.\s]??\d{3}[-.\s]??\d{4}\b/);
+  });
+
+  // Test 17: Show jobs that require Python and have 0–2 years of experience
+  it("Request 17: 'Show jobs that require Python and have 0–2 years of experience' extracts both filters", async () => {
+    const res = await runOrchestrator({
+      userMessage: "Show jobs that require Python and have 0–2 years of experience",
+      profile: mockCandidateProfile,
+      customJobsDataset: mockJobsDataset,
+    });
+
+    expect(res.activeFilters?.skills).toEqual(expect.arrayContaining(["Python"]));
+    expect(res.activeFilters?.experienceLevel).toBe("0-2 years (Entry / Junior)");
+  });
+
+  // Test 18: Show internships in India
+  it("Request 18: 'Show internships in India.' combines internship experience and India location", async () => {
+    const res = await runOrchestrator({
+      userMessage: "Show internships in India.",
+      profile: mockCandidateProfile,
+      customJobsDataset: mockJobsDataset,
+    });
+
+    expect(res.activeFilters?.experienceLevel).toBe("intern");
+    expect(res.activeFilters?.location?.toLowerCase()).toBe("india");
+    expect(res.jobs?.length).toBe(0);
+    expect(res.message).toContain("India");
+  });
+
+  // Test 19: Show jobs from a nonexistent company
+  it("Request 19: 'Show jobs from FakeCorp Nonexistent' honestly reports 0 matches for company", async () => {
+    const res = await runOrchestrator({
+      userMessage: "Show jobs from FakeCorp Nonexistent",
+      profile: mockCandidateProfile,
+      customJobsDataset: mockJobsDataset,
+    });
+
+    expect(res.jobs?.length).toBe(0);
+    expect(res.message).toContain("FakeCorp Nonexistent");
+  });
 });
+

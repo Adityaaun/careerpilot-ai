@@ -3,7 +3,7 @@
 > **Hidani Tech SDE Intern Assessment (AI Agents & Automation)**  
 > Production-ready, full-stack conversational AI career assistant built with Next.js 16, TypeScript, PostgreSQL persistence, and Arbeitnow job verification.
 
-[![Tests](https://img.shields.io/badge/tests-62%20passed%20(100%25)-success)](file:///./tests)
+[![Tests](https://img.shields.io/badge/tests-73%20passed%20(100%25)-success)](file:///./tests)
 [![Dataset](https://img.shields.io/badge/jobs-1%2C600%20verified-blue)](file:///./data/jobs.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Deployment](https://img.shields.io/badge/deployment-Vercel%20Live-brightgreen)](https://careerpilot-ai-beta-lovat.vercel.app/)
@@ -17,13 +17,13 @@ CareerPilot AI is an end-to-end full-stack agentic career assistant designed to 
 ### Key Capabilities
 
 1. **Conversational Resume Parsing**: Upload PDF or DOCX resumes (up to 5MB) directly inside chat or via modal. Extracts candidate name, contact details (email, phone, LinkedIn, GitHub, website), designation, skills, experience, education, and projects with strict Zod validation.
-2. **Explainable Real-Time Job Matching**: Evaluates candidates against a normalized dataset of **1,600 verified real job listings** from Arbeitnow. Generates heuristic compatibility scores (0–100%) broken down into skills (50%), title alignment (30%), and experience (20%) with transparent reasoning.
-3. **Conversational Filter Refinement**: Supports natural language modifications (e.g., *"show only remote jobs"*, *"filter by React and TypeScript"*, *"jobs requiring Python and AWS"*, *"jobs with at least 70% match"*).
+2. **Explainable Real-Time Job Matching**: Evaluates candidates against a normalized dataset of **1,600 verified real job listings** from Arbeitnow. Generates heuristic compatibility scores (0–100%) broken down into skills (50%), title alignment (30%), and experience (20%) with transparent reasoning. Word-boundary matching prevents accidental substring collisions (e.g. Go vs Django, Java vs JavaScript, C vs React).
+3. **Conversational Filter Refinement**: Supports natural language modifications (e.g., *"show only remote jobs"*, *"filter by React and TypeScript"*, *"jobs requiring Python and 0-2 years experience"*, *"jobs with at least 70% match"*).
 4. **Context-Aware Ordinal Tool Execution**: Understands relative conversational references such as *"apply to job 1"*, *"apply to the second one"*, or direct job IDs (`arb_...`).
-5. **Durable Database Persistence & Duplicate Prevention**: Powered by PostgreSQL (Neon / Supabase) with connection pooling and database-level `UNIQUE(job_id)` constraints. Prevents duplicate submissions and guarantees that tracked applications survive server restarts and browser refreshes.
-6. **Transparent Storage Mode & Synchronization**: Real-time storage badges (`PostgreSQL DB` or `Local Dev Store`) show the active backend. Authoritative server re-fetching synchronizes records upon page load and drawer open.
+5. **Durable Database Persistence & Duplicate Prevention**: Powered by PostgreSQL (Neon / Supabase) with connection pooling and database-level `UNIQUE(user_id, job_id)` composite constraints. Prevents duplicate submissions and guarantees that tracked applications survive server restarts and browser refreshes.
+6. **Active Storage Health & Zero Silent Fallback**: Live `SELECT 1` ping verifies active database availability. If `DATABASE_URL` is configured but unavailable, the API returns HTTP 503 rather than silently degrading to ephemeral local storage.
 7. **Application Lifecycle Tracking**: Interactive status progression (`tracked` $\rightarrow$ `submitted` $\rightarrow$ `interviewing` $\rightarrow$ `offered` $\rightarrow$ `rejected`) persisted via `PATCH /api/applications`.
-8. **Robust AI Agent with Deterministic Fallback**: Handles intent routing, answers conversational queries, and strictly refuses to fabricate contacts or phone numbers. Operates at 100% functionality even when no external LLM API key is present.
+8. **Robust AI Agent with Deterministic Fallback**: Handles intent routing, extracts candidate contact info from authentic resume data, and strictly refuses to fabricate contacts or phone numbers. Operates at 100% functionality even when no external LLM API key is present.
 
 ---
 
@@ -35,11 +35,11 @@ CareerPilot AI is an end-to-end full-stack agentic career assistant designed to 
 | **Language** | TypeScript 5 | Strict typing across all components, tools, and endpoints |
 | **Styling** | Tailwind CSS v4 & Lucide Icons | Dark-themed, responsive glassmorphism UI |
 | **Validation** | Zod 4 | Runtime schema validation for profiles, jobs, applications, and chat |
-| **Persistence (Prod)** | PostgreSQL (`pg.Pool`) | Connection-pooled relational storage (Neon / Supabase / Postgres) |
+| **Persistence (Prod)** | PostgreSQL (`pg.Pool`) | Connection-pooled relational storage with composite user scoping |
 | **Persistence (Local)** | Mutexed Atomic JSON | File-locked zero-config local storage for offline development |
 | **Document Parsing** | `pdf-parse` v2 + `mammoth` | Server-side binary extraction for PDF and Word DOCX |
 | **AI Orchestration** | Custom Agent + `@google/genai` | Multi-step agent with deterministic intent routing and Gemini LLM integration |
-| **Testing** | Vitest 5 | 62 automated unit, integration, agent, and database tests (100% pass) |
+| **Testing** | Vitest 5 | 73 automated unit, integration, agent, and database tests (100% pass) |
 
 ---
 
@@ -319,12 +319,13 @@ npx tsx scripts/verify_dataset_sample.ts
 ## 💾 Database Persistence & Schema
 
 ### PostgreSQL Schema
-CareerPilot AI runs automatic schema migration on startup when connected to PostgreSQL. The schema can also be created manually:
+CareerPilot AI runs automatic schema initialization and non-destructive migration on startup when connected to PostgreSQL. The schema is scoped by user identity (`user_id`, defaulting to `'demo_user'` for the single-user assessment demo):
 
 ```sql
 CREATE TABLE IF NOT EXISTS applications (
   id VARCHAR(64) PRIMARY KEY,
-  job_id VARCHAR(128) UNIQUE NOT NULL,
+  user_id VARCHAR(64) DEFAULT 'demo_user' NOT NULL,
+  job_id VARCHAR(128) NOT NULL,
   job_title VARCHAR(256) NOT NULL,
   company VARCHAR(256) NOT NULL,
   location VARCHAR(256),
@@ -333,19 +334,23 @@ CREATE TABLE IF NOT EXISTS applications (
   notes TEXT,
   candidate_name VARCHAR(256),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  CONSTRAINT uq_applications_user_job UNIQUE(user_id, job_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_applications_user_job ON applications(user_id, job_id);
 CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
 CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at DESC);
 ```
 
-### Duplicate Prevention Strategy
-- **Database Level**: `UNIQUE(job_id)` constraint ensures that concurrent requests or duplicate submissions are rejected at the storage engine level.
-- **Application Level**: Queries check for existing records prior to insertion; `INSERT ... ON CONFLICT (job_id) DO NOTHING` handles race conditions gracefully and returns HTTP 409 Conflict.
+### Duplicate Prevention & Privacy Strategy
+- **Database Level Composite Constraint**: `UNIQUE(user_id, job_id)` prevents the same candidate from creating duplicate records for a job, while allowing distinct users in a multi-tenant environment to track identical positions.
+- **Concurrent Race Protection**: Concurrent tracking requests are guarded by PostgreSQL atomicity (`INSERT ... ON CONFLICT (user_id, job_id) DO NOTHING`). Duplicates return a structured HTTP 409 Conflict.
+- **Active Connection Health Check**: `testPostgresConnection()` executes an active `SELECT 1` ping. If `DATABASE_URL` is configured but PostgreSQL is unreachable, the system returns an honest HTTP 503 error rather than silently falling back to ephemeral local file storage on Vercel.
+- **Deployment Scope & Privacy**: Designed as an assessment demo with single-tenant isolation (`demo_user`), with privacy-safe in-memory resume processing. All queries accept an optional `x-user-id` header to seamlessly support multi-user authentication without schema changes.
 - **Distinction**:
-  - `Tracked in CareerPilot AI`: Application stored in user's tracking board.
-  - `Applied to Employer`: User clicked official employer URL to submit external application.
+  - `Tracked in CareerPilot AI`: Application metadata stored on the candidate's personal board.
+  - `Applied to Employer`: User clicked official employer URL to submit their application directly. Never fabricated or asserted without external confirmation.
 
 ---
 
@@ -403,13 +408,16 @@ All tests have been executed and verified:
 
 | Test Suite / Command | Scope | Result |
 | :--- | :--- | :--- |
-| `npm test` | Vitest Unit, Integration, Agent, DB Tests | **62 / 62 passed (100%)** |
+| `npm test` | Vitest Unit, Integration, Agent, DB Tests (10 suites) | **73 / 73 passed (100%)** |
+| `npm run test:integration` | PostgreSQL integration suite (`tests/postgresIntegration.test.ts`) | **Reported as BLOCKED when credentials unset; passes on real DB** |
 | `npm run lint` | Strict ESLint static analysis | **0 errors, 0 warnings** |
 | `npx tsc --noEmit` | TypeScript strict type checking | **0 errors** |
 | `npm run build` | Next.js 16 Turbopack production build | **Compiled cleanly (exit code 0)** |
 | `npm run data:validate` | 1,600 dataset integrity check | **1,600 valid, 0 invalid, 0 dupes** |
-| `tests/conversationalAgent.test.ts` | 14 Phase-5 conversational queries | **14 / 14 passed** |
+| `tests/conversationalAgent.test.ts` | 19 natural-language intent scenarios (Phase 6) | **19 / 19 passed** |
+| `tests/jobMatcher.test.ts` | Word-boundary matching, alias normalization, and scoring | **14 / 14 passed** |
 | `tests/databasePersistence.test.ts` | PostgreSQL schema, status, and dupes | **5 / 5 passed** |
+| `tests/applicationStore.test.ts` | Store health, corruption isolation, and zero-silent-fallback | **7 / 7 passed** |
 
 ---
 

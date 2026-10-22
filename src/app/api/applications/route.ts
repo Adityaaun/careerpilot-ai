@@ -4,7 +4,7 @@ import {
   recordApplication,
   listApplications,
   updateApplicationStatus,
-  getStorageStatus,
+  checkStorageHealth,
 } from "@/lib/tools/applicationStore";
 import { ApplicationStatusSchema } from "@/lib/types/application";
 
@@ -12,13 +12,26 @@ const RecordApplicationBodySchema = z.object({
   jobId: z.string().min(1, "Job ID is required"),
   notes: z.string().optional(),
   candidateName: z.string().optional(),
+  userId: z.string().optional(),
 });
 
 const UpdateApplicationBodySchema = z.object({
   id: z.string().min(1, "Application ID is required"),
   status: ApplicationStatusSchema,
   notes: z.string().optional(),
+  userId: z.string().optional(),
 });
+
+function getUserIdFromRequest(req: NextRequest, bodyUserId?: string): string {
+  const headerUser = req.headers.get("x-user-id");
+  if (headerUser && headerUser.trim().length > 0) {
+    return headerUser.trim();
+  }
+  if (bodyUserId && bodyUserId.trim().length > 0) {
+    return bodyUserId.trim();
+  }
+  return "demo_user";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,9 +49,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { jobId, notes, candidateName } = parseResult.data;
-    const result = await recordApplication({ jobId, notes, candidateName });
-    const storage = getStorageStatus();
+    const { jobId, notes, candidateName, userId: bodyUser } = parseResult.data;
+    const userId = getUserIdFromRequest(req, bodyUser);
+
+    const result = await recordApplication({ jobId, notes, candidateName, userId });
+    const storage = await checkStorageHealth();
 
     if (result.alreadyApplied) {
       return NextResponse.json(
@@ -56,6 +71,7 @@ export async function POST(req: NextRequest) {
 
     if (!result.success) {
       const isNotFound = result.error?.includes("not found");
+      const isDbError = result.error?.includes("Database unavailable");
       return NextResponse.json(
         {
           success: false,
@@ -63,7 +79,7 @@ export async function POST(req: NextRequest) {
           externalNotice: result.externalNotice,
           storage,
         },
-        { status: isNotFound ? 404 : 400 }
+        { status: isNotFound ? 404 : isDbError ? 503 : 400 }
       );
     }
 
@@ -78,21 +94,23 @@ export async function POST(req: NextRequest) {
       { status: 201 }
     );
   } catch (err) {
+    const message = (err as Error).message || "An unexpected error occurred while recording the application.";
     return NextResponse.json(
       {
         success: false,
-        error: "An unexpected error occurred while recording the application.",
-        details: process.env.NODE_ENV === "development" ? (err as Error).message : undefined,
+        error: message,
+        details: process.env.NODE_ENV === "development" ? message : undefined,
       },
       { status: 500 }
     );
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const applications = await listApplications();
-    const storage = getStorageStatus();
+    const userId = getUserIdFromRequest(req);
+    const applications = await listApplications(undefined, undefined, userId);
+    const storage = await checkStorageHealth();
 
     return NextResponse.json({
       success: true,
@@ -105,11 +123,14 @@ export async function GET() {
           : `Retrieved ${applications.length} recorded application(s).`,
     });
   } catch (err) {
+    const message = (err as Error).message || "Failed to retrieve application history.";
+    const storage = await checkStorageHealth();
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to retrieve application history.",
-        details: process.env.NODE_ENV === "development" ? (err as Error).message : undefined,
+        error: message,
+        storage,
+        details: process.env.NODE_ENV === "development" ? message : undefined,
       },
       { status: 500 }
     );
@@ -132,14 +153,18 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const { id, status, notes } = parseResult.data;
-    const updated = await updateApplicationStatus(id, status, notes);
+    const { id, status, notes, userId: bodyUser } = parseResult.data;
+    const userId = getUserIdFromRequest(req, bodyUser);
+
+    const updated = await updateApplicationStatus(id, status, notes, undefined, userId);
+    const storage = await checkStorageHealth();
 
     if (!updated) {
       return NextResponse.json(
         {
           success: false,
           error: `Application with ID "${id}" was not found.`,
+          storage,
         },
         { status: 404 }
       );
@@ -149,14 +174,15 @@ export async function PATCH(req: NextRequest) {
       success: true,
       record: updated,
       message: `Status updated to "${status}".`,
-      storage: getStorageStatus(),
+      storage,
     });
   } catch (err) {
+    const message = (err as Error).message || "Failed to update application status.";
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to update application status.",
-        details: process.env.NODE_ENV === "development" ? (err as Error).message : undefined,
+        error: message,
+        details: process.env.NODE_ENV === "development" ? message : undefined,
       },
       { status: 500 }
     );
