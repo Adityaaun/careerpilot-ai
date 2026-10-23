@@ -44,11 +44,11 @@ export function isPostgresConfigured(): boolean {
 /**
  * Actively checks whether the PostgreSQL database is reachable and accepting queries.
  */
-export async function testPostgresConnection(): Promise<{ ok: boolean; error?: string }> {
-  if (!isPostgresConfigured()) {
+export async function testPostgresConnection(customPool?: Pool): Promise<{ ok: boolean; error?: string }> {
+  if (!customPool && !isPostgresConfigured()) {
     return { ok: false, error: "DATABASE_URL is not set" };
   }
-  const p = getPool();
+  const p = customPool || getPool();
   if (!p) {
     return { ok: false, error: "PostgreSQL pool failed to initialize" };
   }
@@ -72,9 +72,9 @@ export async function testPostgresConnection(): Promise<{ ok: boolean; error?: s
  * Uses composite UNIQUE(user_id, job_id) so multiple users can track the same job independently,
  * while maintaining duplicate prevention within a user's scope.
  */
-export async function ensurePostgresSchema(): Promise<void> {
-  if (schemaInitialized) return;
-  const p = getPool();
+export async function ensurePostgresSchema(customPool?: Pool): Promise<void> {
+  if (schemaInitialized && !customPool) return;
+  const p = customPool || getPool();
   if (!p) return;
 
   let client: PoolClient | null = null;
@@ -136,7 +136,9 @@ export async function ensurePostgresSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at DESC);
     `);
 
-    schemaInitialized = true;
+    if (!customPool) {
+      schemaInitialized = true;
+    }
   } catch (err) {
     console.error("[PostgreSQL Schema Init Error]:", (err as Error).message);
     throw err;
@@ -165,9 +167,12 @@ function mapRowToRecord(row: Record<string, unknown>): ApplicationRecord {
 /**
  * Fetches all tracked applications for a given user from PostgreSQL, ordered by newest first.
  */
-export async function pgGetApplications(userId = "demo_user"): Promise<ApplicationRecord[]> {
-  await ensurePostgresSchema();
-  const p = getPool();
+/**
+ * Fetches all tracked applications for a given user from PostgreSQL, ordered by newest first.
+ */
+export async function pgGetApplications(userId = "demo_user", customPool?: Pool): Promise<ApplicationRecord[]> {
+  await ensurePostgresSchema(customPool);
+  const p = customPool || getPool();
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(
@@ -182,10 +187,11 @@ export async function pgGetApplications(userId = "demo_user"): Promise<Applicati
  */
 export async function pgGetApplicationByJobId(
   jobId: string,
-  userId = "demo_user"
+  userId = "demo_user",
+  customPool?: Pool
 ): Promise<ApplicationRecord | null> {
-  await ensurePostgresSchema();
-  const p = getPool();
+  await ensurePostgresSchema(customPool);
+  const p = customPool || getPool();
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(
@@ -201,7 +207,8 @@ export async function pgGetApplicationByJobId(
  */
 export async function pgInsertApplication(
   record: ApplicationRecord,
-  userId = "demo_user"
+  userId = "demo_user",
+  customPool?: Pool
 ): Promise<{
   success: boolean;
   duplicate?: boolean;
@@ -209,8 +216,8 @@ export async function pgInsertApplication(
   record?: ApplicationRecord;
   error?: string;
 }> {
-  await ensurePostgresSchema();
-  const p = getPool();
+  await ensurePostgresSchema(customPool);
+  const p = customPool || getPool();
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const targetUserId = record.userId || userId || "demo_user";
@@ -251,7 +258,7 @@ export async function pgInsertApplication(
     const errorObj = err as { code?: string; message?: string };
     // PostgreSQL error code 23505 = unique_violation
     if (errorObj?.code === "23505") {
-      const existing = await pgGetApplicationByJobId(record.jobId, targetUserId);
+      const existing = await pgGetApplicationByJobId(record.jobId, targetUserId, customPool);
       return {
         success: false,
         duplicate: true,
@@ -273,10 +280,11 @@ export async function pgUpdateApplicationStatus(
   id: string,
   status: ApplicationStatus,
   notes?: string,
-  userId = "demo_user"
+  userId = "demo_user",
+  customPool?: Pool
 ): Promise<ApplicationRecord | null> {
-  await ensurePostgresSchema();
-  const p = getPool();
+  await ensurePostgresSchema(customPool);
+  const p = customPool || getPool();
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const query = `
@@ -293,9 +301,9 @@ export async function pgUpdateApplicationStatus(
 /**
  * Deletes an application record from the database.
  */
-export async function pgDeleteApplication(id: string, userId = "demo_user"): Promise<boolean> {
-  await ensurePostgresSchema();
-  const p = getPool();
+export async function pgDeleteApplication(id: string, userId = "demo_user", customPool?: Pool): Promise<boolean> {
+  await ensurePostgresSchema(customPool);
+  const p = customPool || getPool();
   if (!p) throw new Error("PostgreSQL pool not available");
 
   const result = await p.query(

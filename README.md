@@ -3,7 +3,7 @@
 > **Hidani Tech SDE Intern Assessment (AI Agents & Automation)**  
 > Production-ready, full-stack conversational AI career assistant built with Next.js 16, TypeScript, PostgreSQL persistence, and Arbeitnow job verification.
 
-[![Tests](https://img.shields.io/badge/tests-73%20passed%20(100%25)-success)](file:///./tests)
+[![Tests](https://img.shields.io/badge/tests-95%20passed%20(100%25)-success)](file:///./tests)
 [![Dataset](https://img.shields.io/badge/jobs-1%2C600%20verified-blue)](file:///./data/jobs.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Deployment](https://img.shields.io/badge/deployment-Vercel%20Live-brightgreen)](https://careerpilot-ai-beta-lovat.vercel.app/)
@@ -39,7 +39,7 @@ CareerPilot AI is an end-to-end full-stack agentic career assistant designed to 
 | **Persistence (Local)** | Mutexed Atomic JSON | File-locked zero-config local storage for offline development |
 | **Document Parsing** | `pdf-parse` v2 + `mammoth` | Server-side binary extraction for PDF and Word DOCX |
 | **AI Orchestration** | Custom Agent + `@google/genai` | Multi-step agent with deterministic intent routing and Gemini LLM integration |
-| **Testing** | Vitest 5 | 73 automated unit, integration, agent, and database tests (100% pass) |
+| **Testing** | Vitest 5 | 95 automated unit, component, safety, and database tests (100% pass) |
 
 ---
 
@@ -258,6 +258,34 @@ Updates the status of an existing application record.
 }
 ```
 
+### 7. `DELETE /api/applications`
+Deletes an application record scoped to the authenticated or demo user.
+- **Query Parameter**: `?id=app_...` (or JSON body: `{ "id": "app_..." }`)
+- **Headers (Optional)**: `x-user-id: <user_id>` (defaults to `'demo_user'`)
+- **Response (Success - HTTP 200)**:
+```json
+{
+  "success": true,
+  "message": "Application \"app_1792607082977_y3k7b\" deleted successfully.",
+  "storage": "postgres"
+}
+```
+- **Response (Not Found - HTTP 404)**:
+```json
+{
+  "success": false,
+  "error": "Application with ID \"app_1792607082977_y3k7b\" was not found for this user.",
+  "storage": "postgres"
+}
+```
+- **Response (Missing ID - HTTP 400)**:
+```json
+{
+  "success": false,
+  "error": "Application ID is required via query parameter (?id=...) or JSON body."
+}
+```
+
 ---
 
 ## 🎯 Heuristic Job Matching Algorithm
@@ -378,6 +406,10 @@ cp .env.example .env.local
 # Leave empty for automatic local JSON storage fallback
 DATABASE_URL=postgresql://user:password@ep-example-pooler.region.neon.tech/neondb?sslmode=require
 
+# Dedicated Disposable PostgreSQL Database for Integration Tests (Optional)
+# MUST NOT point to production or match DATABASE_URL. If omitted, integration tests fail closed safely.
+TEST_DATABASE_URL=postgresql://test_user:test_password@localhost:5433/careerpilot_test
+
 # Google Gemini API Key (Optional — operates in Deterministic Mode if empty)
 GEMINI_API_KEY=
 
@@ -400,24 +432,75 @@ npm run dev
 ```
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### 6. Run Integration Tests Safely (Dedicated Disposable PostgreSQL)
+Integration tests mutate schema and application records and are **strictly blocked** from connecting to runtime or production databases (`DATABASE_URL`).
+They strictly require `TEST_DATABASE_URL` pointing to an isolated, disposable test database:
+
+```bash
+# Spin up a dedicated, disposable local PostgreSQL test container on port 5433
+docker run -d --name careerpilot-test-db \
+  -e POSTGRES_USER=test_user \
+  -e POSTGRES_PASSWORD=test_password \
+  -e POSTGRES_DB=careerpilot_test \
+  -p 5433:5432 \
+  postgres:16-alpine
+
+# Run integration tests against the disposable container
+TEST_DATABASE_URL="postgresql://test_user:test_password@localhost:5433/careerpilot_test" npm run test:integration
+
+# Stop and clean up the container when finished
+docker rm -f careerpilot-test-db
+```
+
 ---
 
 ## 🧪 Test & Verification Results
 
-All tests have been executed and verified:
+All automated tests have been executed and verified in the repository:
 
-| Test Suite / Command | Scope | Result |
+### Test Suite Summary
+- **Total Automated Test Suites**: 12 files
+- **Total Automated Tests**: **95 / 95 passed (100%)**
+- **Unit, Component & Mocked Tests**: **93 tests passed** (execute fully offline with zero database dependencies)
+- **Database Safety Guard Tests**: **7 tests passed** (verify all fail-closed database guards without live connections)
+- **Integration Test Safety**: **2 tests passed** (verify offline storage fallback and safe fail-closed reporting when disposable database credentials are unset)
+- **Live Integration Tests**: Reported as **BLOCKED** when `TEST_DATABASE_URL` is unset or matches production; passes when a dedicated disposable database is provided.
+
+### Database Integration Test Safety Guard
+Integration tests enforce strict safety via `src/lib/db/testSafetyGuard.ts`:
+1. **No Production Fallback**: Integration tests **never** fall back to `DATABASE_URL`.
+2. **Missing / Empty Variable**: If `TEST_DATABASE_URL` is missing or blank, tests fail closed with zero database connections attempted.
+3. **Identical Target Rejection**: Rejects connection targets whose host, port, and database match `DATABASE_URL`.
+4. **Cloud Production Host Blocking**: Rejects managed cloud production hosts (`*.neon.tech`, `*.supabase.co`, `*.rds.amazonaws.com`, etc.).
+5. **Production Database Name Blocking**: Rejects database names containing `prod`, `production`, or `neondb`.
+6. **Malformed URL Validation**: Rejects syntactically invalid URLs before connection initialization.
+7. **Connection Isolation**: Integration helpers use an isolated `customPool?: Pool` without altering application runtime database state.
+
+### Detailed Test Results Breakdown
+
+| Test Suite / File | Scope | Tests | Result |
+| :--- | :--- | :---: | :--- |
+| `tests/conversationalAgent.test.ts` | 19 natural-language intent scenarios & fallback | 19 | **PASS** |
+| `tests/jobMatcher.test.ts` | Word-boundary matching, alias normalization, and scoring | 14 | **PASS** |
+| `tests/orchestrator.test.ts` | Agent routing, ordinal resolution, tool dispatch | 12 | **PASS** |
+| `tests/applicationStore.test.ts` | Quarantining corrupted storage, mutex locking, zero-fallback | 11 | **PASS** |
+| `tests/resumeParser.test.ts` | PDF/DOCX extraction, contact extraction, Zod validation | 10 | **PASS** |
+| `tests/applicationsDrawer.test.ts` | Escape key lifecycle, backdrop clicks, dialog accessibility | 10 | **PASS** |
+| `tests/testSafetyGuard.test.ts` | Failsafe DB guards: missing URL, identical target, cloud prod | 7 | **PASS** |
+| `tests/databasePersistence.test.ts` | Composite unique constraints, schema migrations, status | 5 | **PASS** |
+| `tests/chatApi.test.ts` | Chat endpoint input validation & response schemas | 3 | **PASS** |
+| `tests/postgresIntegration.test.ts` | Safety guard fail-closed verification & local health check | 2 | **PASS** (Live DB: **BLOCKED** when unset) |
+| `tests/validateJobs.test.ts` | 1,600 Arbeitnow dataset schema & integrity verification | 1 | **PASS** |
+| `tests/smoke.test.ts` | System environment and core module exports smoke check | 1 | **PASS** |
+| **Total Automated Suite** | **Full Vitest Suite (12 files)** | **95** | **95 / 95 PASS (100%)** |
+
+### Build & Static Verification
+| Check | Command | Result |
 | :--- | :--- | :--- |
-| `npm test` | Vitest Unit, Integration, Agent, DB Tests (10 suites) | **73 / 73 passed (100%)** |
-| `npm run test:integration` | PostgreSQL integration suite (`tests/postgresIntegration.test.ts`) | **Reported as BLOCKED when credentials unset; passes on real DB** |
-| `npm run lint` | Strict ESLint static analysis | **0 errors, 0 warnings** |
-| `npx tsc --noEmit` | TypeScript strict type checking | **0 errors** |
-| `npm run build` | Next.js 16 Turbopack production build | **Compiled cleanly (exit code 0)** |
-| `npm run data:validate` | 1,600 dataset integrity check | **1,600 valid, 0 invalid, 0 dupes** |
-| `tests/conversationalAgent.test.ts` | 19 natural-language intent scenarios (Phase 6) | **19 / 19 passed** |
-| `tests/jobMatcher.test.ts` | Word-boundary matching, alias normalization, and scoring | **14 / 14 passed** |
-| `tests/databasePersistence.test.ts` | PostgreSQL schema, status, and dupes | **5 / 5 passed** |
-| `tests/applicationStore.test.ts` | Store health, corruption isolation, and zero-silent-fallback | **7 / 7 passed** |
+| **ESLint** | `npm run lint` | **0 errors, 0 warnings** |
+| **TypeScript** | `npx tsc --noEmit` | **0 errors (strict mode)** |
+| **Production Build** | `npm run build` | **Compiled cleanly (exit code 0)** |
+| **Dataset Validation** | `npm run data:validate` | **1,600 valid, 0 invalid, 0 dupes** |
 
 ---
 

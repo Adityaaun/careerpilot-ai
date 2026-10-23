@@ -208,8 +208,8 @@ describe("ApplicationsDrawer Component & Keyboard Dismissal Suite", () => {
     });
   });
 
-  describe("Interactive Click Dismissal Contracts (Backdrop, Inside, and Close Button)", () => {
-    it("invokes onClose when clicking the outer backdrop element", () => {
+  describe("Interactive Dismissal Contracts & Accessibility Markup", () => {
+    it("renders the outer backdrop with dialog role, modal state, and accessible label", () => {
       const onClose = vi.fn();
       const element = React.createElement(ApplicationsDrawer, {
         isOpen: true,
@@ -217,11 +217,23 @@ describe("ApplicationsDrawer Component & Keyboard Dismissal Suite", () => {
         applications: [],
       });
 
-      // The outer element returned by ApplicationsDrawer
-      // Validate that renderToString includes the backdrop and close button
       const html = renderToString(element);
+      expect(html).toContain('role="dialog"');
+      expect(html).toContain('aria-modal="true"');
       expect(html).toContain('aria-label="Tracked Applications"');
+    });
+
+    it("renders close button with accessible title for keyboard and screen-reader dismissal", () => {
+      const onClose = vi.fn();
+      const element = React.createElement(ApplicationsDrawer, {
+        isOpen: true,
+        onClose,
+        applications: [],
+      });
+
+      const html = renderToString(element);
       expect(html).toContain('title="Close drawer"');
+      expect(html).toContain("Tracked Applications");
     });
   });
 });
