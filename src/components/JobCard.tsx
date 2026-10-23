@@ -80,13 +80,28 @@ export const JobCard: React.FC<JobCardProps> = ({ result, index, onApply, isAppl
       {/* Matched Skills */}
       {matchedSkills.length > 0 && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] font-semibold text-slate-400">MATCHED SKILLS:</span>
-          {matchedSkills.slice(0, 5).map((skill, sIdx) => (
+          <span className="text-[10px] font-semibold text-indigo-400">MATCHED SKILLS:</span>
+          {matchedSkills.slice(0, 8).map((skill, sIdx) => (
             <span
               key={sIdx}
               className="rounded bg-indigo-950/70 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300 border border-indigo-800/40"
             >
               {skill}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Role / Job Requirements Tags */}
+      {job.skills && job.skills.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-semibold text-slate-500">JOB TAGS:</span>
+          {job.skills.slice(0, 8).map((tag, tIdx) => (
+            <span
+              key={tIdx}
+              className="rounded bg-slate-900/60 px-1.5 py-0.5 text-[10px] font-normal text-slate-400 border border-slate-800"
+            >
+              {tag}
             </span>
           ))}
         </div>

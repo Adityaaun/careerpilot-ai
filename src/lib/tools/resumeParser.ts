@@ -16,7 +16,7 @@ const TECH_SKILLS_DICTIONARY = [
   "React", "React.js", "Next.js", "Vue", "Vue.js", "Angular", "Svelte", "Node.js", "Express", "Express.js", "NestJS", "FastAPI",
   "Django", "Flask", "Spring Boot", "Ruby on Rails", "Laravel", "ASP.NET", ".NET",
   "HTML", "HTML5", "CSS", "CSS3", "Tailwind CSS", "Bootstrap", "Sass", "Redux", "Zustand", "GraphQL", "REST API", "gRPC",
-  "PostgreSQL", "MySQL", "MongoDB", "Redis", "SQLite", "Elasticsearch", "Cassandra", "DynamoDB", "Firebase", "Supabase", "Prisma",
+  "SQL", "PostgreSQL", "MySQL", "MongoDB", "Redis", "SQLite", "Elasticsearch", "Cassandra", "DynamoDB", "Firebase", "Supabase", "Prisma",
   "AWS", "Amazon Web Services", "Azure", "GCP", "Google Cloud", "Docker", "Kubernetes", "Terraform", "CI/CD", "GitHub Actions",
   "Linux", "Unix", "Git", "GitHub", "GitLab", "Jira", "Agile", "Scrum",
   "Machine Learning", "Deep Learning", "PyTorch", "TensorFlow", "Pandas", "NumPy", "Scikit-Learn", "OpenCV", "NLP", "LLMs",
