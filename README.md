@@ -48,40 +48,40 @@ CareerPilot AI is an end-to-end full-stack agentic career assistant designed to 
 ## 🏛️ System Architecture & Data Flow
 
 ```mermaid
-graph TD
-    User([Candidate / Browser]) <--> UI[Next.js App Router UI]
-    
-    subgraph Frontend [Presentation Layer]
-        UI --> Chat[Chat Interface & State]
-        UI --> Upload[Resume Dropzone Modal]
-        UI --> Cards[Job Recommendation Cards]
-        UI --> Tracker[Applications Drawer]
-        UI <--> StorageLocal[(Browser LocalStorage - Session/Profile Cache)]
+flowchart TD
+    User["Candidate / Browser"] <--> UI["Next.js App Router UI"]
+
+    subgraph Frontend["Presentation Layer"]
+        UI --> Chat["Chat Interface & State"]
+        UI --> Upload["Resume Dropzone Modal"]
+        UI --> Cards["Job Recommendation Cards"]
+        UI --> Tracker["Applications Drawer"]
+        UI <--> StorageLocal[("Browser LocalStorage - Session/Profile Cache")]
     end
 
-    subgraph API [Next.js Route Handlers]
-        Chat <--> RouteChat[/api/chat]
-        Upload --> RouteResume[/api/resume/parse]
-        Cards --> RouteJobs[/api/jobs/search]
-        Tracker <--> RouteApp[/api/applications - GET, POST, PATCH]
+    subgraph API["Next.js Route Handlers"]
+        Chat <--> RouteChat["/api/chat"]
+        Upload --> RouteResume["/api/resume/parse"]
+        Cards --> RouteJobs["/api/jobs/search"]
+        Tracker <--> RouteApp["/api/applications - GET, POST, PATCH"]
     end
 
-    subgraph Agent [Orchestrator & Tools]
-        RouteChat --> Orchestrator[Orchestrator Agent]
-        Orchestrator <--> IntentParser[Contextual Intent & Filter Parser]
-        Orchestrator <--> LLM[Gemini 2.5 SDK / Deterministic Engine]
-        Orchestrator --> ToolResume[Resume Parser Tool]
-        Orchestrator --> ToolMatch[Job Matcher Tool]
-        Orchestrator --> ToolApply[Application Recording Tool]
-        Orchestrator --> ToolTrack[Tracking Tool]
+    subgraph Agent["Orchestrator & Tools"]
+        RouteChat --> Orchestrator["Orchestrator Agent"]
+        Orchestrator <--> IntentParser["Contextual Intent & Filter Parser"]
+        Orchestrator <--> LLM["Gemini SDK / Deterministic Engine"]
+        Orchestrator --> ToolResume["Resume Parser Tool"]
+        Orchestrator --> ToolMatch["Job Matcher Tool"]
+        Orchestrator --> ToolApply["Application Recording Tool"]
+        Orchestrator --> ToolTrack["Tracking Tool"]
     end
 
-    subgraph Data [Persistence Layer]
-        ToolMatch <--> JobsDataset[(data/jobs.json: 1,600 Verified Listings)]
-        ToolApply <--> DBRouter{DATABASE_URL configured?}
+    subgraph Data["Persistence Layer"]
+        ToolMatch <--> JobsDataset[("data/jobs.json: 1,600 Verified Listings")]
+        ToolApply <--> DBRouter{"DATABASE_URL configured?"}
         ToolTrack <--> DBRouter
-        DBRouter -- Yes (Production) --> PostgresDB[(PostgreSQL Database: Neon/Supabase)]
-        DBRouter -- No (Local Dev) --> LocalStore[(Local JSON Fallback Store)]
+        DBRouter -- "Yes (Production)" --> PostgresDB[("PostgreSQL Database: Neon/Supabase")]
+        DBRouter -- "No (Local Dev)" --> LocalStore[("Local JSON Fallback Store")]
     end
 ```
 
