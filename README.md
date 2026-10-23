@@ -6,7 +6,7 @@
 **Demo Video:** [Watch the CareerPilot AI walkthrough](https://drive.google.com/file/d/1hbxQh_LTGLcTicvL6nYjToXnO-zQBiJF/view?usp=sharing)
 
 [![Tests](https://img.shields.io/badge/tests-95%20passed%20(100%25)-success)](./tests)
-[![Dataset](https://img.shields.io/badge/jobs-1%2C600%20verified-blue)](file:///./data/jobs.json)
+[![Dataset](https://img.shields.io/badge/jobs-1%2C600%20verified-blue)](./data/jobs.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Deployment](https://img.shields.io/badge/deployment-Vercel%20Live-brightgreen)](https://careerpilot-ai-beta-lovat.vercel.app/)
 
