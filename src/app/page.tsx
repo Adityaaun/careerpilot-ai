@@ -62,8 +62,19 @@ export default function Home() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom of conversation
+  // Auto-scroll handler: scroll top of new assistant response into view so user sees status & Card #1, or bottom for user queries
   useEffect(() => {
+    if (messages.length <= 1) return;
+    const lastMsg = messages[messages.length - 1];
+
+    if (lastMsg && lastMsg.sender === "assistant") {
+      const elem = document.getElementById(`msg-${lastMsg.id}`);
+      if (elem) {
+        elem.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+    }
+
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isSubmitting]);
 
@@ -411,6 +422,7 @@ export default function Home() {
           {messages.map((msg) => (
             <div
               key={msg.id}
+              id={`msg-${msg.id}`}
               className={`flex items-start gap-3 animate-fade-in ${
                 msg.sender === "user" ? "flex-row-reverse" : "flex-row"
               }`}

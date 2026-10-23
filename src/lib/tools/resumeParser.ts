@@ -279,38 +279,51 @@ export function parseResumeTextHeuristic(rawText: string): ParsedProfile {
     summary: [],
   };
 
+  const isSectionHeader = (line: string, regex: RegExp): boolean => {
+    const trimmed = line.trim();
+    return trimmed.length <= 45 && regex.test(trimmed);
+  };
+
   let currentSection = "summary";
   for (const line of lines) {
-    const lower = line.toLowerCase();
     if (
-      lower.includes("experience") ||
-      lower.includes("work history") ||
-      lower.includes("employment")
+      isSectionHeader(
+        line,
+        /^(?:work\s+experience|professional\s+experience|experience|employment(?:\s+history)?|work\s+history)\b/i
+      )
     ) {
       currentSection = "experience";
       continue;
     } else if (
-      lower.includes("education") ||
-      lower.includes("academic") ||
-      lower.includes("qualification")
+      isSectionHeader(
+        line,
+        /^(?:education|academic(?:\s+background|\s+history)?|qualifications?)\b/i
+      )
     ) {
       currentSection = "education";
       continue;
     } else if (
-      lower.includes("project") ||
-      lower.includes("personal projects") ||
-      lower.includes("technical projects")
+      isSectionHeader(
+        line,
+        /^(?:projects?|technical\s+projects?|personal\s+projects?|key\s+projects?)\b/i
+      )
     ) {
       currentSection = "projects";
       continue;
     } else if (
-      lower.includes("summary") ||
-      lower.includes("objective") ||
-      lower.includes("profile")
+      isSectionHeader(
+        line,
+        /^(?:professional\s+summary|summary|profile|about\s+me|career\s+objective|objective)\b/i
+      )
     ) {
       currentSection = "summary";
       continue;
-    } else if (lower.includes("skills") || lower.includes("technologies")) {
+    } else if (
+      isSectionHeader(
+        line,
+        /^(?:technical\s+skills?|skills?(?:\s*&|\s+and)?\s*(?:technologies|competencies)?|technologies)\b/i
+      )
+    ) {
       currentSection = "skills";
       continue;
     }
@@ -323,32 +336,91 @@ export function parseResumeTextHeuristic(rawText: string): ParsedProfile {
   // 6. Experience items
   const experienceItems: ExperienceItem[] = [];
   if (sections.experience.length > 0) {
-    const expText = sections.experience.join("\n");
-    const blocks = expText.split(/\n(?=[A-Z0-9][a-zA-Z0-9\s,&|-]+(?:20\d\d|19\d\d|present))/i);
+    const expLines = sections.experience;
+    let currentItem: ExperienceItem | null = null;
 
-    for (const b of blocks) {
-      const bLines = b.split("\n").map((s) => s.trim()).filter(Boolean);
-      if (bLines.length === 0) continue;
+    for (let i = 0; i < expLines.length; i++) {
+      const l = expLines[i];
+      const isBullet = l.startsWith("•") || l.startsWith("-") || l.startsWith("*");
+      const dateMatch = l.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|19\d\d)[\s\w–-]+(?:Present|20\d\d|19\d\d|\b)/i);
 
-      const firstLine = bLines[0];
-      const dateMatch = b.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|19\d\d)[\s\w–-]+(?:Present|20\d\d|19\d\d|\b)/i);
-      const dates = dateMatch ? dateMatch[0].trim() : "";
+      if (!isBullet) {
+        if (dateMatch) {
+          if (currentItem) experienceItems.push(currentItem);
 
-      const parts = firstLine.split(/[-–|@,]/).map((p) => p.trim());
-      const role = parts[0] || designation;
-      const company = parts[1] || (parts.length > 2 ? parts[2] : "Company");
+          const dates = dateMatch[0].trim();
+          const cleanLine = l.replace(dateMatch[0], "").trim();
+          const parts = cleanLine.split(/[-–|@,]/).map((p) => p.trim()).filter(Boolean);
 
-      const highlights = bLines.slice(1).filter((l) => l.startsWith("•") || l.startsWith("-") || l.length > 20);
+          let company = parts[1] || "Company";
+          let role = parts[0] || designation;
 
-      experienceItems.push({
-        role,
-        company,
-        location: "",
-        startDate: dates.split(/[-–]/)[0]?.trim() || "",
-        endDate: dates.split(/[-–]/)[1]?.trim() || "Present",
-        description: bLines.slice(1).join(" "),
-        highlights: highlights.slice(0, 5),
-      });
+          if (
+            i > 0 &&
+            !expLines[i - 1].startsWith("•") &&
+            !expLines[i - 1].startsWith("-") &&
+            !expLines[i - 1].match(/20\d\d/) &&
+            expLines[i - 1].length < 60
+          ) {
+            company = expLines[i - 1].split(/[-–|,]/)[0].trim();
+            role = cleanLine.replace(/[()\-–]/g, " ").trim() || designation;
+          }
+
+          currentItem = {
+            role,
+            company,
+            location: "",
+            startDate: dates.split(/[-–]/)[0]?.trim() || "",
+            endDate: dates.split(/[-–]/)[1]?.trim() || "Present",
+            description: "",
+            highlights: [],
+          };
+        } else if (
+          i + 1 < expLines.length &&
+          expLines[i + 1].match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|19\d\d)/i)
+        ) {
+          // Line i is company name/location, line i+1 will have role & date
+          continue;
+        }
+      } else if (currentItem) {
+        const cleanBullet = l.replace(/^[•\-*]\s*/, "").trim();
+        if (cleanBullet.length > 5) {
+          currentItem.highlights.push(cleanBullet);
+        }
+      }
+    }
+
+    if (currentItem) experienceItems.push(currentItem);
+
+    // Resilient fallback if line-based structure didn't produce items
+    if (experienceItems.length === 0 && expLines.length > 0) {
+      const expText = expLines.join("\n");
+      const blocks = expText.split(/\n(?=[A-Z0-9][a-zA-Z0-9\s,&|-]+(?:20\d\d|19\d\d|present))/i);
+
+      for (const b of blocks) {
+        const bLines = b.split("\n").map((s) => s.trim()).filter(Boolean);
+        if (bLines.length === 0) continue;
+
+        const firstLine = bLines[0];
+        const dateMatch = b.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|19\d\d)[\s\w–-]+(?:Present|20\d\d|19\d\d|\b)/i);
+        const dates = dateMatch ? dateMatch[0].trim() : "";
+
+        const parts = firstLine.split(/[-–|@,]/).map((p) => p.trim());
+        const role = parts[0] || designation;
+        const company = parts[1] || (parts.length > 2 ? parts[2] : "Company");
+
+        const highlights = bLines.slice(1).filter((hl) => hl.startsWith("•") || hl.startsWith("-") || hl.length > 20);
+
+        experienceItems.push({
+          role,
+          company,
+          location: "",
+          startDate: dates.split(/[-–]/)[0]?.trim() || "",
+          endDate: dates.split(/[-–]/)[1]?.trim() || "Present",
+          description: bLines.slice(1).join(" "),
+          highlights: highlights.slice(0, 5),
+        });
+      }
     }
   }
 
@@ -396,9 +468,19 @@ export function parseResumeTextHeuristic(rawText: string): ParsedProfile {
   if (expMatch) {
     yearsOfExperience = parseInt(expMatch[1], 10);
   } else if (experienceItems.length > 0) {
-    yearsOfExperience = Math.min(experienceItems.length * 2, 10);
+    const isInternOrStudent = experienceItems.every(
+      (item) =>
+        item.role.toLowerCase().includes("intern") ||
+        item.role.toLowerCase().includes("trainee") ||
+        item.role.toLowerCase().includes("student")
+    );
+    if (isInternOrStudent) {
+      yearsOfExperience = 0;
+    } else {
+      yearsOfExperience = Math.min(experienceItems.length * 2, 10);
+    }
   } else {
-    yearsOfExperience = 1;
+    yearsOfExperience = 0;
   }
 
   const profile: ParsedProfile = {

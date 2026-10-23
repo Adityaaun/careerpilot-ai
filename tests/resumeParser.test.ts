@@ -126,6 +126,34 @@ describe("Resume Parser Tool", () => {
       expect(profile.skills).toContain("JavaScript");
       expect(profile.skills).toContain("HTML");
     });
+    it("does not mistake summary sentences containing the word experience for work experience headers", () => {
+      const studentResume = `
+        Alex Intern
+        alex@test.com
+        
+        Professional Summary
+        Computer Science student with hands-on experience building full-stack web applications and AI tools.
+        
+        Technical Skills
+        JavaScript, React, Node.js, Python, SQL
+        
+        Work Experience
+        TechCorp Inc
+        Software Engineering Intern May 2026 – August 2026
+        • Built internal dashboard using React and Node.js.
+        
+        Education
+        B.E. in Computer Science - Tech University (2022 – 2026)
+      `;
+
+      const profile = parseResumeTextHeuristic(studentResume);
+      expect(profile.name).toBe("Alex Intern");
+      expect(profile.experience.length).toBe(1);
+      expect(profile.experience[0].company).toContain("TechCorp");
+      expect(profile.experience[0].role).toContain("Intern");
+      expect(profile.yearsOfExperience).toBe(0);
+      expect(profile.summary).toContain("hands-on experience");
+    });
   });
 
   describe("End-to-End parseResumeFile", () => {
