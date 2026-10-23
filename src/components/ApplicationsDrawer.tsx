@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Briefcase, X, ExternalLink, Calendar, CheckCircle2, ChevronDown, RefreshCw } from "lucide-react";
 import { ApplicationRecord, ApplicationStatus } from "@/lib/types/application";
 
@@ -22,6 +22,22 @@ const STATUS_OPTIONS: Array<{ value: ApplicationStatus; label: string; color: st
   { value: "rejected", label: "Archived", color: "text-slate-400 bg-slate-500/10 border-slate-500/20" },
 ];
 
+/**
+ * Dismisses the applications drawer when the Escape key is pressed.
+ * Returns true if Escape was intercepted and onClose was invoked.
+ */
+export function handleDrawerKeyDown(
+  event: { key: string; stopPropagation: () => void },
+  onClose: () => void
+): boolean {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    onClose();
+    return true;
+  }
+  return false;
+}
+
 export const ApplicationsDrawer: React.FC<ApplicationsDrawerProps> = ({
   isOpen,
   onClose,
@@ -32,6 +48,20 @@ export const ApplicationsDrawer: React.FC<ApplicationsDrawerProps> = ({
   isRefreshing,
 }) => {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // Close drawer on Escape key press, cleaning up the listener properly
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      handleDrawerKeyDown(event, onClose);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -46,8 +76,17 @@ export const ApplicationsDrawer: React.FC<ApplicationsDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="relative h-full w-full max-w-md bg-[#0f172a] border-l border-slate-800 p-6 flex flex-col text-slate-100 shadow-2xl">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Tracked Applications"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm animate-fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative h-full w-full max-w-md bg-[#0f172a] border-l border-slate-800 p-6 flex flex-col text-slate-100 shadow-2xl"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div className="flex items-center gap-2.5">
