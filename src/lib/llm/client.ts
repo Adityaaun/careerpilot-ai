@@ -12,7 +12,7 @@ export interface LLMStatus {
 export function getLLMStatus(): LLMStatus {
   const apiKey = process.env.GEMINI_API_KEY;
   const isLive = Boolean(apiKey && apiKey.trim().length > 5);
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
   return {
     provider: isLive ? "gemini" : "deterministic-fallback",
