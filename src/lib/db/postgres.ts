@@ -3,6 +3,7 @@ import { ApplicationRecord, ApplicationStatus } from "../types/application";
 
 let pool: Pool | null = null;
 let schemaInitialized = false;
+const initializedPools = new WeakSet<Pool>();
 
 /**
  * Returns a pooled PostgreSQL client using DATABASE_URL if configured.
@@ -73,7 +74,11 @@ export async function testPostgresConnection(customPool?: Pool): Promise<{ ok: b
  * while maintaining duplicate prevention within a user's scope.
  */
 export async function ensurePostgresSchema(customPool?: Pool): Promise<void> {
-  if (schemaInitialized && !customPool) return;
+  if (customPool) {
+    if (initializedPools.has(customPool)) return;
+  } else if (schemaInitialized) {
+    return;
+  }
   const p = customPool || getPool();
   if (!p) return;
 
@@ -121,12 +126,6 @@ export async function ensurePostgresSchema(customPool?: Pool): Promise<void> {
         ) THEN
           ALTER TABLE applications ADD CONSTRAINT unique_user_job_application UNIQUE (user_id, job_id);
         END IF;
-
-        -- Normalize any rows created with ad-hoc emails to 'demo_user' for the single-user assessment demo
-        UPDATE applications 
-        SET user_id = 'demo_user' 
-        WHERE user_id != 'demo_user' 
-          AND job_id NOT IN (SELECT job_id FROM applications WHERE user_id = 'demo_user');
       END $$;
     `);
 
@@ -136,7 +135,9 @@ export async function ensurePostgresSchema(customPool?: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at DESC);
     `);
 
-    if (!customPool) {
+    if (customPool) {
+      initializedPools.add(customPool);
+    } else {
       schemaInitialized = true;
     }
   } catch (err) {
